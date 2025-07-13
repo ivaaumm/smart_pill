@@ -25,6 +25,17 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "owner": "smart_pill"
+    "owner": "smart_pill",
+    "extra": {
+      "eas": {
+        "projectId": "f2215718-b4f1-4b46-942f-0e5d0b14c821"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/f2215718-b4f1-4b46-942f-0e5d0b14c821"
+    }
   }
 }

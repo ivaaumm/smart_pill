@@ -8,21 +8,17 @@ import {
   TouchableOpacity,
   Alert,
 } from "react-native";
-import { auth } from "../credenciales";
 
 export default function Login(props) {
-  // Creamos la variable estado
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
-  // Creamos la función para iniciar sesión
+
   const logueo = async () => {
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
+    if (email && password) {
       Alert.alert("Inicio de sesión exitoso", "Bienvenido a Smart Pill");
       props.navigation.navigate("Home");
-    } catch (error) {
-      console.error("Error al iniciar sesión:", error);
-      Alert.alert("Error al iniciar sesión", error.message);
+    } else {
+      Alert.alert("Error al iniciar sesión", "Completa ambos campos.");
     }
   };
 

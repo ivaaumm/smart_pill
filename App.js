@@ -4,6 +4,7 @@ import { createStackNavigator } from "@react-navigation/stack";
 
 import Home from "./screens/home";
 import Login from "./screens/login";
+import Register from "./screens/Register";
 
 // Firebase ya se inicializa en credenciales.js
 
@@ -12,12 +13,24 @@ const Stack = createStackNavigator();
 export default function App() {
   return (
     <NavigationContainer>
-      <Stack.Navigator initialRouteName="Login">
+      <Stack.Navigator initialRouteName="Register">
         <Stack.Screen
           name="Login"
           component={Login}
           options={{
             title: "Inicio de Sesión",
+            headerTintColor: "#fff",
+            headerTitleAlign: "center",
+            headerStyle: {
+              backgroundColor: "#084C61",
+            },
+          }}
+        />
+        <Stack.Screen
+          name="Register"
+          component={Register}
+          options={{
+            title: "Registro",
             headerTintColor: "#fff",
             headerTitleAlign: "center",
             headerStyle: {
