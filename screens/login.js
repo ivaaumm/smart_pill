@@ -8,17 +8,41 @@ import {
   TouchableOpacity,
   Alert,
 } from "react-native";
+import { apiRequest, API_CONFIG } from "../credenciales";
 
 export default function Login(props) {
-  const [email, setEmail] = React.useState("");
+  const [usuario, setUsuario] = React.useState("");
   const [password, setPassword] = React.useState("");
 
   const logueo = async () => {
-    if (email && password) {
-      Alert.alert("Inicio de sesión exitoso", "Bienvenido a Smart Pill");
-      props.navigation.navigate("Home");
-    } else {
-      Alert.alert("Error al iniciar sesión", "Completa ambos campos.");
+    if (!usuario || !password) {
+      Alert.alert("Error", "Completa ambos campos");
+      return;
+    }
+
+    try {
+      const response = await apiRequest(API_CONFIG.ENDPOINTS.LOGIN, {
+        method: "POST",
+        body: JSON.stringify({
+          usuario: usuario,
+          password: password,
+        }),
+      });
+
+      if (response.success && response.data && response.data.success) {
+        Alert.alert(
+          "Inicio de sesión exitoso",
+          `Bienvenido ${response.data.nombre_usuario} a Smart Pill`
+        );
+        props.navigation.navigate("Home");
+      } else {
+        Alert.alert(
+          "Error al iniciar sesión",
+          response.data?.error || "Credenciales incorrectas"
+        );
+      }
+    } catch (error) {
+      Alert.alert("Error de conexión", "No se pudo conectar con el servidor");
     }
   };
 
@@ -26,21 +50,21 @@ export default function Login(props) {
     <View style={styles.padre}>
       <View>
         <Image
-          source={require("../assets/fondologin.jpg")}
+          source={require("../assets/icons/S M A R T P I L L.png")}
           style={styles.profile}
         />
       </View>
       <View style={styles.tarjeta}>
         <View style={styles.cajaTexto}>
           <TextInput
-            placeholder="E-Mail"
+            placeholder="Correo o Nombre de usuario"
             style={{ paddingHorizontal: 15 }}
-            onChangeText={(text) => setEmail(text)}
+            onChangeText={(text) => setUsuario(text)}
           />
         </View>
         <View style={styles.cajaTexto}>
           <TextInput
-            placeholder="Password"
+            placeholder="Contraseña"
             style={{ paddingHorizontal: 15 }}
             secureTextEntry={true}
             onChangeText={(text) => setPassword(text)}
@@ -58,19 +82,18 @@ export default function Login(props) {
 
 const styles = StyleSheet.create({
   padre: {
-    flex: 1,
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: "white",
   },
   profile: {
-    width: 100,
-    height: 100,
+    width: 200,
+    height: 200,
     borderRadius: 50,
     borderColor: "White",
   },
   tarjeta: {
-    margin: 20,
+    margin: 0,
     backgroundColor: "white",
     borderRadius: 20,
     width: "90%",
@@ -86,7 +109,7 @@ const styles = StyleSheet.create({
   },
   cajaTexto: {
     paddingVertical: 10,
-    backgroundColor: "#A1E3D840",
+    backgroundColor: "#7A2C3440",
     borderRadius: 30,
     marginVertical: 10,
   },
@@ -94,7 +117,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   cajaBoton: {
-    backgroundColor: "#084C61",
+    backgroundColor: "#7A2C34",
     borderRadius: 30,
     paddingVertical: 15,
     width: 150,

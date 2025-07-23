@@ -1,12 +1,11 @@
 import React from "react";
 import { NavigationContainer } from "@react-navigation/native";
 import { createStackNavigator } from "@react-navigation/stack";
+import Navigation from "./navigation";
 
 import Home from "./screens/home";
 import Login from "./screens/login";
 import Register from "./screens/Register";
-
-// Firebase ya se inicializa en credenciales.js
 
 const Stack = createStackNavigator();
 
@@ -22,7 +21,7 @@ export default function App() {
             headerTintColor: "#fff",
             headerTitleAlign: "center",
             headerStyle: {
-              backgroundColor: "#084C61",
+              backgroundColor: "#7A2C34",
             },
           }}
         />
@@ -34,19 +33,20 @@ export default function App() {
             headerTintColor: "#fff",
             headerTitleAlign: "center",
             headerStyle: {
-              backgroundColor: "#084C61",
+              backgroundColor: "#7A2C34",
             },
           }}
         />
         <Stack.Screen
           name="Home"
-          component={Home}
+          component={Navigation}
           options={{
-            title: "Inicio",
+            headerLeft: null,
+            title: "SMART PILL",
             headerTintColor: "#fff",
             headerTitleAlign: "center",
             headerStyle: {
-              backgroundColor: "#084C61",
+              backgroundColor: "#7A2C34",
             },
           }}
         />
