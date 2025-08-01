@@ -63,7 +63,7 @@ try {
         
         if (isset($data->estado)) {
             $estado = strtolower($conn->real_escape_string($data->estado));
-            $estados_validos = ['activo', 'pausado', 'completado'];
+            $estados_validos = ['activo', 'inactivo', 'pausado', 'completado'];
             if (!in_array($estado, $estados_validos)) {
                 throw new Exception("Estado inválido. Debe ser: " . implode(', ', $estados_validos));
             }
@@ -131,6 +131,55 @@ try {
         
         if (!$conn->query($sql)) {
             throw new Exception("Error al editar programación: " . $conn->error);
+        }
+        
+        // Manejar horarios si se proporcionan
+        $horarios_actualizados = 0;
+        if (isset($data->horarios) && is_array($data->horarios) && count($data->horarios) > 0) {
+            // Eliminar horarios existentes
+            $sql_delete_horarios = "DELETE FROM horarios_tratamiento WHERE tratamiento_id = $programacion_id";
+            if (!$conn->query($sql_delete_horarios)) {
+                throw new Exception("Error al eliminar horarios existentes: " . $conn->error);
+            }
+            
+            // Insertar nuevos horarios
+            foreach ($data->horarios as $horario) {
+                if (!isset($horario->dia_semana) || !isset($horario->hora) || !isset($horario->dosis)) {
+                    continue; // Saltar horarios incompletos
+                }
+                
+                $dia_semana = $conn->real_escape_string($horario->dia_semana);
+                $hora = $conn->real_escape_string($horario->hora);
+                $dosis = $conn->real_escape_string($horario->dosis);
+                $activo = isset($horario->activo) ? intval($horario->activo) : 1;
+                
+                $sql_insert_horario = "INSERT INTO horarios_tratamiento (
+                    tratamiento_id, 
+                    usuario_id,
+                    remedio_global_id,
+                    dia_semana, 
+                    hora, 
+                    dosis, 
+                    activo, 
+                    fecha_creacion
+                ) VALUES (
+                    $programacion_id, 
+                    " . $programacion_actual['usuario_id'] . ",
+                    " . $programacion_actual['remedio_global_id'] . ",
+                    '$dia_semana', 
+                    '$hora', 
+                    '$dosis', 
+                    $activo, 
+                    NOW()
+                )";
+                
+                if (!$conn->query($sql_insert_horario)) {
+                    throw new Exception("Error al insertar horario: " . $conn->error);
+                }
+                $horarios_actualizados++;
+            }
+            
+            $campos_actualizados[] = "horarios ($horarios_actualizados horarios)";
         }
         
         // Obtener datos actualizados

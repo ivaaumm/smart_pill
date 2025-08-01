@@ -661,6 +661,42 @@ const Medicamentos = ({ navigation }) => {
     }
   };
 
+  // Función para cambiar estado del tratamiento (activar/desactivar)
+  const cambiarEstadoProgramacion = async (programacionId, nuevoEstado) => {
+    try {
+      const response = await apiRequest(`/editar_tratamiento.php`, {
+        method: "POST",
+        body: JSON.stringify({
+          programacion_id: programacionId,
+          estado: nuevoEstado,
+        }),
+      });
+
+      if (response.success) {
+        alert(
+          `Tratamiento ${
+            nuevoEstado === "activo" ? "activado" : "desactivado"
+          } exitosamente`
+        );
+        await cargarProgramaciones(); // Recargar la lista
+        // Actualizar el estado local del modal si está abierto
+        if (
+          programacionDetalles &&
+          programacionDetalles.programacion_id === programacionId
+        ) {
+          setProgramacionDetalles((prev) => ({
+            ...prev,
+            estado: nuevoEstado,
+          }));
+        }
+      } else {
+        alert("Error: " + (response.error || "Error desconocido"));
+      }
+    } catch (error) {
+      alert("Error de conexión: " + error.message);
+    }
+  };
+
   // Renderizar item de pastilla
   const renderPastillaItem = ({ item }) => (
     <TouchableOpacity
@@ -1213,8 +1249,31 @@ const Medicamentos = ({ navigation }) => {
             </Text>
           </View>
           <View style={styles.programacionActions}>
-            <View style={styles.estadoBadge}>
-              <Text style={styles.estadoText}>
+            <View
+              style={[
+                styles.estadoBadge,
+                programacion.estado === "activo"
+                  ? styles.estadoActivo
+                  : styles.estadoInactivo,
+              ]}
+            >
+              <MaterialCommunityIcons
+                name={
+                  programacion.estado === "activo"
+                    ? "check-circle"
+                    : "pause-circle"
+                }
+                size={16}
+                color={programacion.estado === "activo" ? "#fff" : "#666"}
+              />
+              <Text
+                style={[
+                  styles.estadoText,
+                  programacion.estado === "activo"
+                    ? styles.estadoTextActivo
+                    : styles.estadoTextInactivo,
+                ]}
+              >
                 {programacion.estado === "activo" ? "Activo" : "Inactivo"}
               </Text>
             </View>
@@ -1418,6 +1477,40 @@ const Medicamentos = ({ navigation }) => {
               >
                 <MaterialCommunityIcons name="pencil" size={20} color="#fff" />
                 <Text style={styles.actionButtonText}>Editar</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.actionButton,
+                  programacionDetalles.estado === "activo"
+                    ? styles.deactivateButton
+                    : styles.activateButton,
+                ]}
+                onPress={() => {
+                  const nuevoEstado =
+                    programacionDetalles.estado === "activo"
+                      ? "inactivo"
+                      : "activo";
+                  cambiarEstadoProgramacion(
+                    programacionDetalles.programacion_id,
+                    nuevoEstado
+                  );
+                }}
+              >
+                <MaterialCommunityIcons
+                  name={
+                    programacionDetalles.estado === "activo"
+                      ? "pause-circle"
+                      : "play-circle"
+                  }
+                  size={20}
+                  color="#fff"
+                />
+                <Text style={styles.actionButtonText}>
+                  {programacionDetalles.estado === "activo"
+                    ? "Desactivar"
+                    : "Activar"}
+                </Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -1976,18 +2069,7 @@ const Medicamentos = ({ navigation }) => {
                       </TouchableOpacity>
                     )}
                   </View>
-                ) : (
-                  <FlatList
-                    data={filteredPastillas}
-                    renderItem={renderPastillaItem}
-                    keyExtractor={(item) =>
-                      item.remedio_global_id?.toString() || item.id?.toString()
-                    }
-                    showsVerticalScrollIndicator={false}
-                    style={styles.pastillasList}
-                    contentContainerStyle={styles.pastillasListContent}
-                  />
-                )}
+                ) : null}
               </View>
             ) : (
               <ScrollView
@@ -2032,6 +2114,13 @@ const Medicamentos = ({ navigation }) => {
                         <Text style={styles.medicamentoSeleccionadoValue}>
                           {selectedPastilla?.nombre_comercial}
                         </Text>
+                        {selectedPastilla?.descripcion && (
+                          <Text
+                            style={styles.medicamentoSeleccionadoDescripcion}
+                          >
+                            {selectedPastilla.descripcion}
+                          </Text>
+                        )}
                       </View>
                     </View>
 
@@ -2828,22 +2917,12 @@ const styles = StyleSheet.create({
   },
   deleteButton: {
     backgroundColor: "#ff6b6b",
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 25,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    minWidth: 100,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.2,
-    shadowRadius: 3,
-    elevation: 3,
+  },
+  activateButton: {
+    backgroundColor: "#4CAF50",
+  },
+  deactivateButton: {
+    backgroundColor: "#FF9800",
   },
   horarioDosisText: {
     fontSize: 13,
@@ -2941,6 +3020,30 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "bold",
   },
+  estadoActivo: {
+    backgroundColor: "#4CAF50",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  estadoInactivo: {
+    backgroundColor: "#f5f5f5",
+    borderWidth: 1,
+    borderColor: "#ddd",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  estadoTextActivo: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "bold",
+  },
+  estadoTextInactivo: {
+    color: "#666",
+    fontSize: 12,
+    fontWeight: "bold",
+  },
   menuButton: {
     padding: 4,
   },
@@ -2952,6 +3055,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+    marginBottom: 12,
   },
   detalleText: {
     fontSize: 14,
@@ -3218,6 +3322,13 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "bold",
     color: "#333",
+    marginBottom: 4,
+  },
+  medicamentoSeleccionadoDescripcion: {
+    fontSize: 13,
+    color: "#666",
+    lineHeight: 18,
+    fontStyle: "italic",
   },
   step5Container: {
     flex: 1,
@@ -3396,12 +3507,12 @@ const styles = StyleSheet.create({
   },
   modalDetallesFooter: {
     flexDirection: "row",
-    justifyContent: "space-around",
+    justifyContent: "center",
     padding: 20,
-    paddingTop: 15,
+    paddingTop: 20,
     borderTopWidth: 1,
     borderTopColor: "#eee",
-    gap: 15,
+    gap: 8,
   },
   detalleItem: {
     flexDirection: "row",
@@ -3410,6 +3521,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     backgroundColor: "#fff",
     borderRadius: 12,
+    marginBottom: 12,
     shadowColor: "#000",
     shadowOffset: {
       width: 0,
@@ -3630,15 +3742,19 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#7A2C34",
-    paddingVertical: 12,
-    paddingHorizontal: 25,
+    paddingVertical: 16,
+    paddingHorizontal: 20, // ← más ancho
     borderRadius: 25,
     marginTop: 10,
-    gap: 8,
+    gap: 6,
+    flex: 0,
+    minHeight: 50,
+    minWidth: 110, // ← más ancho
+    maxWidth: 120, // ← más ancho
   },
   actionButtonText: {
     color: "#fff",
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: "bold",
   },
   deleteButton: {

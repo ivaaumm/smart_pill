@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { useFocusEffect } from "@react-navigation/native";
 import { apiRequest } from "../credenciales";
 import { useUser } from "../UserContextProvider";
 
@@ -49,11 +50,11 @@ export default function Home() {
           setProgramaciones(programacionesData);
 
           // Alert temporal para verificar
-          if (programacionesData.length > 0) {
-            alert(
-              `Home: ${programacionesData.length} tratamientos cargados\nPrimer tratamiento: ${programacionesData[0].nombre_tratamiento}`
-            );
-          }
+          // if (programacionesData.length > 0) {
+          //   alert(
+          //     `Home: ${programacionesData.length} tratamientos cargados\nPrimer tratamiento: ${programacionesData[0].nombre_tratamiento}`
+          //   );
+          // }
         } else {
           console.log(
             "⚠️ Los datos no son un array, estableciendo array vacío"
@@ -78,6 +79,14 @@ export default function Home() {
     await cargarProgramaciones();
     setRefreshing(false);
   };
+
+  // Auto-refresh cuando se regresa al Home
+  useFocusEffect(
+    React.useCallback(() => {
+      console.log("🔄 Home enfocado - recargando programaciones...");
+      cargarProgramaciones();
+    }, [user?.usuario_id])
+  );
 
   useEffect(() => {
     cargarProgramaciones();
@@ -120,6 +129,11 @@ export default function Home() {
       return { hoy: [], manana: [] };
     }
 
+    // Filtrar solo tratamientos activos
+    const programacionesActivas = programaciones.filter(
+      (p) => (p.estado || "").toLowerCase() === "activo"
+    );
+
     const hoy = new Date();
     const manana = new Date(hoy);
     manana.setDate(hoy.getDate() + 1);
@@ -139,7 +153,7 @@ export default function Home() {
     const tomasHoy = [];
     const tomasManana = [];
 
-    programaciones.forEach((programacion) => {
+    programacionesActivas.forEach((programacion) => {
       if (!programacion.horarios) return;
 
       // Obtener horarios reales
@@ -166,20 +180,26 @@ export default function Home() {
         (horario) => horario.dia_semana === diaManana
       );
 
-      // Agregar tomas de hoy
+      // Agregar tomas de hoy (solo futuras)
       horariosHoy.forEach((horario) => {
-        tomasHoy.push({
-          id: `${programacion.programacion_id}-${horario.hora}`,
-          nombre:
-            programacion.nombre_tratamiento || programacion.nombre_comercial,
-          medicamento: programacion.nombre_comercial,
-          hora: horario.hora,
-          dosis: horario.dosis,
-          programacion: programacion,
-        });
+        const horaHorario = new Date();
+        const [horas, minutos] = horario.hora.split(":");
+        horaHorario.setHours(parseInt(horas), parseInt(minutos), 0, 0);
+
+        // Solo agregar si la hora no ha pasado
+        if (horaHorario > hoy) {
+          tomasHoy.push({
+            id: `${programacion.programacion_id}-${horario.hora}`,
+            nombre:
+              programacion.nombre_tratamiento || programacion.nombre_comercial,
+            medicamento: programacion.nombre_comercial,
+            hora: horario.hora,
+            programacion: programacion,
+          });
+        }
       });
 
-      // Agregar tomas de mañana
+      // Agregar tomas de mañana (todas, ya que son futuras)
       horariosManana.forEach((horario) => {
         tomasManana.push({
           id: `${programacion.programacion_id}-${horario.hora}`,
@@ -187,7 +207,6 @@ export default function Home() {
             programacion.nombre_tratamiento || programacion.nombre_comercial,
           medicamento: programacion.nombre_comercial,
           hora: horario.hora,
-          dosis: horario.dosis,
           programacion: programacion,
         });
       });
@@ -217,7 +236,6 @@ export default function Home() {
         <View style={styles.tomaContent}>
           <Text style={styles.tomaNombre}>{toma.nombre}</Text>
           <Text style={styles.tomaMedicamento}>{toma.medicamento}</Text>
-          <Text style={styles.tomaDosis}>{toma.dosis}</Text>
         </View>
       </View>
     );
