@@ -7,12 +7,17 @@ import {
   TextInput,
   TouchableOpacity,
   Alert,
+  Platform,
 } from "react-native";
 import { apiRequest, API_CONFIG } from "../credenciales";
+import { useUser } from "../UserContextProvider";
+import { Ionicons } from "@expo/vector-icons";
 
 export default function Login(props) {
   const [usuario, setUsuario] = React.useState("");
   const [password, setPassword] = React.useState("");
+  const [showPassword, setShowPassword] = React.useState(false);
+  const { setUser } = useUser();
 
   const logueo = async () => {
     if (!usuario || !password) {
@@ -30,6 +35,13 @@ export default function Login(props) {
       });
 
       if (response.success && response.data && response.data.success) {
+        setUser({
+          usuario_id: response.data.usuario_id,
+          nombre: response.data.nombre_usuario,
+          correo: response.data.correo,
+          edad: response.data.edad,
+          avatar: response.data.avatar,
+        });
         Alert.alert(
           "Inicio de sesión exitoso",
           `Bienvenido ${response.data.nombre_usuario} a Smart Pill`
@@ -47,34 +59,57 @@ export default function Login(props) {
   };
 
   return (
-    <View style={styles.padre}>
-      <View>
-        <Image
-          source={require("../assets/icons/S M A R T P I L L.png")}
-          style={styles.profile}
-        />
-      </View>
-      <View style={styles.tarjeta}>
+    <View
+      style={{
+        flex: 1,
+        justifyContent: "center",
+        alignItems: "center",
+        backgroundColor: "white",
+      }}
+    >
+      <Image
+        source={require("../assets/icons/S M A R T P I L L.png")}
+        style={{ width: 260, height: 260, marginBottom: 0 }}
+      />
+      <View style={[styles.tarjeta, { marginTop: -80, marginBottom: 60 }]}>
         <View style={styles.cajaTexto}>
           <TextInput
             placeholder="Correo o Nombre de usuario"
             style={{ paddingHorizontal: 15 }}
             onChangeText={(text) => setUsuario(text)}
+            value={usuario}
           />
         </View>
         <View style={styles.cajaTexto}>
-          <TextInput
-            placeholder="Contraseña"
-            style={{ paddingHorizontal: 15 }}
-            secureTextEntry={true}
-            onChangeText={(text) => setPassword(text)}
-          />
+          <View style={{ flexDirection: "row", alignItems: "center" }}>
+            <TextInput
+              placeholder="Contraseña"
+              style={{ flex: 1, paddingHorizontal: 15 }}
+              secureTextEntry={!showPassword}
+              onChangeText={(text) => setPassword(text)}
+              value={password}
+            />
+            <TouchableOpacity onPress={() => setShowPassword((v) => !v)}>
+              <Ionicons
+                name={showPassword ? "eye-off" : "eye"}
+                size={22}
+                color="#7A2C34"
+                style={{ marginRight: 12 }}
+              />
+            </TouchableOpacity>
+          </View>
         </View>
         <View style={styles.PadreBoton}>
           <TouchableOpacity style={styles.cajaBoton} onPress={logueo}>
-            <Text style={styles.TextoBoton}>Sign In</Text>
+            <Text style={styles.TextoBoton}>Iniciar sesión</Text>
           </TouchableOpacity>
         </View>
+        <TouchableOpacity
+          onPress={() => props.navigation.navigate("Register")}
+          style={{ marginTop: 10 }}
+        >
+          <Text style={styles.link}>¿No tienes cuenta? Regístrate</Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -82,6 +117,7 @@ export default function Login(props) {
 
 const styles = StyleSheet.create({
   padre: {
+    flex: 1,
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: "white",
@@ -129,4 +165,5 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     fontSize: 16,
   },
+  link: { color: "#2B2B2B", textAlign: "center", marginTop: 10 },
 });
