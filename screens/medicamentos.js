@@ -64,6 +64,12 @@ const Medicamentos = ({ navigation }) => {
   const [programacionDetalles, setProgramacionDetalles] = useState(null);
   const [editandoProgramacion, setEditandoProgramacion] = useState(null);
 
+  // Estados para alarmas
+  const [alarmasActivas, setAlarmasActivas] = useState(true);
+  const [sonidoAlarma, setSonidoAlarma] = useState("default");
+  const [mostrarConfiguracionAlarmas, setMostrarConfiguracionAlarmas] =
+    useState(false);
+
   // Log para depurar el estado de las pastillas
   useEffect(() => {
     console.log(
@@ -419,7 +425,24 @@ const Medicamentos = ({ navigation }) => {
         console.log("📥 Respuesta:", response);
 
         if (response.success && response.data.success) {
-          alert("¡Tratamiento programado exitosamente!");
+          const programacionId = response.data.programacion_id;
+
+          // Crear alarmas si están activadas
+          if (alarmasActivas) {
+            const alarmasCreadas = await crearAlarmas(programacionId);
+            if (alarmasCreadas) {
+              alert(
+                "¡Tratamiento programado exitosamente con alarmas activadas!"
+              );
+            } else {
+              alert(
+                "¡Tratamiento programado exitosamente! (Error al crear alarmas)"
+              );
+            }
+          } else {
+            alert("¡Tratamiento programado exitosamente!");
+          }
+
           setModalVisible(false);
           resetearFormulario();
           cargarProgramaciones();
@@ -456,6 +479,9 @@ const Medicamentos = ({ navigation }) => {
     setPastillas([]);
     setFilteredPastillas([]);
     setError(null);
+    // Resetear estados de alarmas
+    setAlarmasActivas(true);
+    setSonidoAlarma("default");
   };
 
   // Función para editar programación
@@ -694,6 +720,96 @@ const Medicamentos = ({ navigation }) => {
       }
     } catch (error) {
       alert("Error de conexión: " + error.message);
+    }
+  };
+
+  // Función para crear alarmas
+  const crearAlarmas = async (programacionId) => {
+    if (!user || !user.usuario_id) {
+      console.log("❌ Usuario no disponible para crear alarmas");
+      return false;
+    }
+
+    try {
+      const response = await apiRequest(`/crear_alarmas.php`, {
+        method: "POST",
+        body: JSON.stringify({
+          usuario_id: user.usuario_id,
+          programacion_id: programacionId,
+          activo: alarmasActivas ? 1 : 0,
+          sonido: sonidoAlarma,
+        }),
+      });
+
+      if (response.success) {
+        console.log("✅ Alarmas creadas correctamente:", response.message);
+        return true;
+      } else {
+        console.error("❌ Error al crear alarmas:", response.error);
+        Alert.alert("Error", "No se pudieron crear las alarmas");
+        return false;
+      }
+    } catch (error) {
+      console.error("❌ Error en crearAlarmas:", error);
+      Alert.alert("Error", "Error de conexión al crear alarmas");
+      return false;
+    }
+  };
+
+  // Función para obtener alarmas de una programación
+  const obtenerAlarmasProgramacion = async (programacionId) => {
+    if (!user || !user.usuario_id) {
+      console.log("❌ Usuario no disponible para obtener alarmas");
+      return null;
+    }
+
+    try {
+      const response = await apiRequest(
+        `/alarmas_programacion.php?usuario_id=${user.usuario_id}&programacion_id=${programacionId}`
+      );
+
+      if (response.success) {
+        console.log("✅ Alarmas obtenidas:", response.data);
+        return response.data;
+      } else {
+        console.error("❌ Error al obtener alarmas:", response.error);
+        return null;
+      }
+    } catch (error) {
+      console.error("❌ Error en obtenerAlarmasProgramacion:", error);
+      return null;
+    }
+  };
+
+  // Función para actualizar alarma
+  const actualizarAlarma = async (alarmaId, datos) => {
+    if (!user || !user.usuario_id) {
+      console.log("❌ Usuario no disponible para actualizar alarma");
+      return false;
+    }
+
+    try {
+      const response = await apiRequest(`/actualizar_alarma.php`, {
+        method: "PUT",
+        body: JSON.stringify({
+          alarma_id: alarmaId,
+          usuario_id: user.usuario_id,
+          ...datos,
+        }),
+      });
+
+      if (response.success) {
+        console.log("✅ Alarma actualizada correctamente");
+        return true;
+      } else {
+        console.error("❌ Error al actualizar alarma:", response.error);
+        Alert.alert("Error", "No se pudo actualizar la alarma");
+        return false;
+      }
+    } catch (error) {
+      console.error("❌ Error en actualizarAlarma:", error);
+      Alert.alert("Error", "Error de conexión al actualizar alarma");
+      return false;
     }
   };
 
@@ -1070,6 +1186,65 @@ const Medicamentos = ({ navigation }) => {
           <MaterialCommunityIcons name="plus" size={20} color="#fff" />
           <Text style={styles.agregarHorarioText}>Agregar Horario</Text>
         </TouchableOpacity>
+
+        {/* Configuración de Alarmas */}
+        <View style={styles.alarmasContainer}>
+          <View style={styles.alarmasTitleContainer}>
+            <MaterialCommunityIcons name="bell" size={20} color="#7A2C34" />
+            <Text style={styles.alarmasTitle}>Configuración de Alarmas</Text>
+          </View>
+
+          {/* Interruptor para activar/desactivar alarmas */}
+          <View style={styles.alarmaSwitchContainer}>
+            <View style={styles.alarmaSwitchInfo}>
+              <Text style={styles.alarmaSwitchLabel}>Activar alarmas</Text>
+              <Text style={styles.alarmaSwitchDescription}>
+                Recibir notificaciones para cada toma programada
+              </Text>
+            </View>
+            <Switch
+              value={alarmasActivas}
+              onValueChange={setAlarmasActivas}
+              trackColor={{ false: "#e0e0e0", true: "#7A2C34" }}
+              thumbColor={alarmasActivas ? "#fff" : "#f4f3f4"}
+            />
+          </View>
+
+          {/* Configuración de sonido (solo si las alarmas están activas) */}
+          {alarmasActivas && (
+            <View style={styles.sonidoContainer}>
+              <Text style={styles.sonidoLabel}>Sonido de alarma:</Text>
+              <View style={styles.sonidoOptions}>
+                {[
+                  { value: "default", label: "Predeterminado" },
+                  { value: "gentle", label: "Suave" },
+                  { value: "urgent", label: "Urgente" },
+                  { value: "melody", label: "Melodía" },
+                ].map((opcion) => (
+                  <TouchableOpacity
+                    key={opcion.value}
+                    style={[
+                      styles.sonidoOption,
+                      sonidoAlarma === opcion.value &&
+                        styles.sonidoOptionSelected,
+                    ]}
+                    onPress={() => setSonidoAlarma(opcion.value)}
+                  >
+                    <Text
+                      style={[
+                        styles.sonidoOptionText,
+                        sonidoAlarma === opcion.value &&
+                          styles.sonidoOptionTextSelected,
+                      ]}
+                    >
+                      {opcion.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          )}
+        </View>
       </View>
     );
   };
@@ -1212,6 +1387,49 @@ const Medicamentos = ({ navigation }) => {
               </View>
             </View>
           )}
+
+          {/* Configuración de Alarmas */}
+          <View style={styles.horariosDetalleContainer}>
+            <View style={styles.horariosDetalleHeader}>
+              <MaterialCommunityIcons name="bell" size={20} color="#7A2C34" />
+              <Text style={styles.horariosDetalleTitle}>
+                Configuración de Alarmas:
+              </Text>
+            </View>
+            <View style={styles.horariosDetalleList}>
+              <View style={styles.horarioDetalleItem}>
+                <MaterialCommunityIcons
+                  name={alarmasActivas ? "bell" : "bell-off"}
+                  size={24}
+                  color={alarmasActivas ? "#7A2C34" : "#999"}
+                />
+                <Text style={styles.horarioDetalleText}>
+                  Alarmas: {alarmasActivas ? "Activadas" : "Desactivadas"}
+                </Text>
+              </View>
+              {alarmasActivas && (
+                <View style={styles.horarioDetalleItem}>
+                  <MaterialCommunityIcons
+                    name="music-note"
+                    size={24}
+                    color="#7A2C34"
+                  />
+                  <Text style={styles.horarioDetalleText}>
+                    Sonido:{" "}
+                    {sonidoAlarma === "default"
+                      ? "Predeterminado"
+                      : sonidoAlarma === "gentle"
+                      ? "Suave"
+                      : sonidoAlarma === "urgent"
+                      ? "Urgente"
+                      : sonidoAlarma === "melody"
+                      ? "Melodía"
+                      : sonidoAlarma}
+                  </Text>
+                </View>
+              )}
+            </View>
+          </View>
         </View>
 
         {/* Información adicional */}
@@ -3691,9 +3909,89 @@ const styles = StyleSheet.create({
   horariosTitleContainer: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    marginBottom: 16,
+    gap: 10,
+  },
+  horariosTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#7A2C34",
+  },
+  // Estilos para alarmas
+  alarmasContainer: {
+    marginTop: 24,
+    padding: 20,
+    backgroundColor: "#f8f9fa",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#e9ecef",
+  },
+  alarmasTitleContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 16,
+    gap: 10,
+  },
+  alarmasTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#7A2C34",
+  },
+  alarmaSwitchContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#e9ecef",
+  },
+  alarmaSwitchInfo: {
+    flex: 1,
+  },
+  alarmaSwitchLabel: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#333",
+    marginBottom: 4,
+  },
+  alarmaSwitchDescription: {
+    fontSize: 14,
+    color: "#666",
+    lineHeight: 18,
+  },
+  sonidoContainer: {
+    marginTop: 16,
+  },
+  sonidoLabel: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#333",
     marginBottom: 12,
+  },
+  sonidoOptions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
+  },
+  sonidoOption: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#ddd",
+    backgroundColor: "#fff",
+  },
+  sonidoOptionSelected: {
+    backgroundColor: "#7A2C34",
+    borderColor: "#7A2C34",
+  },
+  sonidoOptionText: {
+    fontSize: 14,
+    color: "#666",
+    fontWeight: "500",
+  },
+  sonidoOptionTextSelected: {
+    color: "#fff",
   },
   programacionesContainer: {
     padding: 20,

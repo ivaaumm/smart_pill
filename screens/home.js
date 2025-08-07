@@ -692,8 +692,8 @@ const styles = StyleSheet.create({
   tomaMedicamento: {
     fontSize: 13,
     color: "#666",
-    marginBottom: 2,
   },
+
   tomaDosis: {
     fontSize: 12,
     color: "#7A2C34",
