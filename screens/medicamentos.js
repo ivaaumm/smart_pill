@@ -24,6 +24,42 @@ import { apiRequest } from "../config";
 import { UserContext } from "../UserContextProvider";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { ConfiguracionSonidosAlarmas } from "../componente-sonidos-simple";
+import { Audio } from "expo-av";
+import * as Notifications from "expo-notifications";
+// Función para programar alarmas locales según los horarios y días
+const programarAlarmasLocales = async (tratamiento) => {
+  const dias = tratamiento.dias_seleccionados || [];
+  const horarios = tratamiento.horarios || [];
+  const diasMap = {
+    lunes: 1,
+    martes: 2,
+    miercoles: 3,
+    jueves: 4,
+    viernes: 5,
+    sabado: 6,
+    domingo: 0,
+  };
+  for (const dia of dias) {
+    for (const horario of horarios) {
+      const [hour, minute] = horario.hora.split(":");
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: "Hora de tu medicamento",
+          body: `Toma ${horario.dosis || "1 tableta"} de ${
+            tratamiento.nombre_tratamiento || tratamiento.nombre_comercial
+          }`,
+          sound: true, // Sonido por defecto del sistema
+        },
+        trigger: {
+          weekday: diasMap[dia],
+          hour: parseInt(hour),
+          minute: parseInt(minute),
+          repeats: true,
+        },
+      });
+    }
+  }
+};
 
 const Medicamentos = ({ navigation }) => {
   const { user } = useContext(UserContext);
@@ -97,11 +133,16 @@ const Medicamentos = ({ navigation }) => {
     cargarPastillas();
   }, []);
 
+  // Solicitar permisos de notificación al montar el componente
+  useEffect(() => {
+    Notifications.requestPermissionsAsync();
+  }, []);
+
   // Cargar programaciones del usuario
   const cargarProgramaciones = async () => {
     console.log("🔄 Iniciando cargarProgramaciones...");
     if (!user || !user.usuario_id) {
-      console.log("❌ Usuario no disponible para cargar programaciones");
+      console.log("Usuario no disponible para cargar programaciones");
       return;
     }
 
@@ -125,7 +166,7 @@ const Medicamentos = ({ navigation }) => {
           programacionesData.forEach((prog, index) => {
             console.log(`📊 Programación ${index}:`, prog);
             console.log(`📊 Horarios de programación ${index}:`, prog.horarios);
-            console.log(`📊 Tipo de horarios:`, typeof prog.horarios);
+            console.log(`📊 Tipo de datos:`, typeof prog.horarios);
             console.log(
               `📊 Es array de horarios:`,
               Array.isArray(prog.horarios)
@@ -146,11 +187,11 @@ const Medicamentos = ({ navigation }) => {
         );
         console.log("📊 Datos de programaciones:", programacionesData);
       } else {
-        console.log("❌ Error al cargar programaciones:", response.data);
+        console.log("Error al cargar programaciones:", response.data);
         setProgramaciones([]); // Establecer array vacío en caso de error
       }
     } catch (error) {
-      console.log("❌ Error de conexión:", error.message);
+      console.log("Error de conexión:", error.message);
       setProgramaciones([]); // Establecer array vacío en caso de error
     } finally {
       setLoadingProgramaciones(false);
@@ -185,11 +226,11 @@ const Medicamentos = ({ navigation }) => {
           setFilteredPastillas(pastillasData);
           console.log("✅ Estados actualizados correctamente");
         } else {
-          console.log("⚠️ No se encontraron pastillas en la base de datos");
+          console.log("No se encontraron pastillas en la base de datos");
           setError("No se encontraron medicamentos en la base de datos");
         }
       } else {
-        console.log("❌ Error en la respuesta:", response.data);
+        console.log("Error en la respuesta:", response.data);
         setError(
           response.data?.error ||
             response.data?.message ||
@@ -197,7 +238,7 @@ const Medicamentos = ({ navigation }) => {
         );
       }
     } catch (error) {
-      console.log("❌ Error de conexión:", error.message);
+      console.log("Error de conexión:", error.message);
       setError("Error de conexión: " + error.message);
     } finally {
       setLoading(false);
@@ -438,6 +479,16 @@ const Medicamentos = ({ navigation }) => {
           const horariosCreados = response.data.horarios_creados || 0;
           const alarmasCreadas = response.data.alarmas_creadas || 0;
 
+          // Programar alarmas locales en el dispositivo
+          try {
+            await programarAlarmasLocales({
+              ...programacionData,
+              nombre_comercial: selectedPastilla?.nombre_comercial,
+            });
+          } catch (e) {
+            console.log("Error al programar alarmas locales:", e);
+          }
+
           let mensaje = `¡Tratamiento programado exitosamente con ${horariosCreados} horarios!`;
           if (alarmasActivas && alarmasCreadas > 0) {
             mensaje += `\nSe configuraron ${alarmasCreadas} alarmas.`;
@@ -516,8 +567,8 @@ const Medicamentos = ({ navigation }) => {
       return [];
     })();
 
-    console.log("📅 Horarios reales:", horariosReales);
-    console.log("📅 Estructura del primer horario:", horariosReales[0]);
+    console.log("Horarios reales:", horariosReales);
+    console.log("Estructura del primer horario:", horariosReales[0]);
 
     // Convertir horarios al formato del formulario
     const horariosFormato = horariosReales.map((horario) => ({
@@ -529,8 +580,8 @@ const Medicamentos = ({ navigation }) => {
     const diasSeleccionados = [
       ...new Set(horariosReales.map((h) => h.dia_semana || h.dia || h.dias)),
     ];
-    console.log("📅 Días seleccionados:", diasSeleccionados);
-    console.log("📅 Horarios reales para extraer días:", horariosReales);
+    console.log("Días seleccionados:", diasSeleccionados);
+    console.log("Horarios reales para extraer días:", horariosReales);
 
     setProgramacionData({
       nombre_tratamiento:
@@ -730,7 +781,7 @@ const Medicamentos = ({ navigation }) => {
   // Función para crear alarmas
   const crearAlarmas = async (programacionId) => {
     if (!user || !user.usuario_id) {
-      console.log("❌ Usuario no disponible para crear alarmas");
+      console.log("Usuario no disponible para crear alarmas");
       return false;
     }
 
@@ -749,12 +800,12 @@ const Medicamentos = ({ navigation }) => {
         console.log("✅ Alarmas creadas correctamente:", response.message);
         return true;
       } else {
-        console.error("❌ Error al crear alarmas:", response.error);
+        console.error("Error al crear alarmas:", response.error);
         Alert.alert("Error", "No se pudieron crear las alarmas");
         return false;
       }
     } catch (error) {
-      console.error("❌ Error en crearAlarmas:", error);
+      console.error("Error en crearAlarmas:", error);
       Alert.alert("Error", "Error de conexión al crear alarmas");
       return false;
     }
@@ -763,7 +814,7 @@ const Medicamentos = ({ navigation }) => {
   // Función para obtener alarmas de una programación
   const obtenerAlarmasProgramacion = async (programacionId) => {
     if (!user || !user.usuario_id) {
-      console.log("❌ Usuario no disponible para obtener alarmas");
+      console.log("Usuario no disponible para obtener alarmas");
       return null;
     }
 
@@ -776,11 +827,11 @@ const Medicamentos = ({ navigation }) => {
         console.log("✅ Alarmas obtenidas:", response.data);
         return response.data;
       } else {
-        console.error("❌ Error al obtener alarmas:", response.error);
+        console.error("Error al obtener alarmas:", response.error);
         return null;
       }
     } catch (error) {
-      console.error("❌ Error en obtenerAlarmasProgramacion:", error);
+      console.error("Error en obtenerAlarmasProgramacion:", error);
       return null;
     }
   };
@@ -788,7 +839,7 @@ const Medicamentos = ({ navigation }) => {
   // Función para actualizar alarma
   const actualizarAlarma = async (alarmaId, datos) => {
     if (!user || !user.usuario_id) {
-      console.log("❌ Usuario no disponible para actualizar alarma");
+      console.log("Usuario no disponible para actualizar alarma");
       return false;
     }
 
@@ -806,12 +857,12 @@ const Medicamentos = ({ navigation }) => {
         console.log("✅ Alarma actualizada correctamente");
         return true;
       } else {
-        console.error("❌ Error al actualizar alarma:", response.error);
+        console.error("Error al actualizar alarma:", response.error);
         Alert.alert("Error", "No se pudo actualizar la alarma");
         return false;
       }
     } catch (error) {
-      console.error("❌ Error en actualizarAlarma:", error);
+      console.error("Error en actualizarAlarma:", error);
       Alert.alert("Error", "Error de conexión al actualizar alarma");
       return false;
     }
@@ -869,7 +920,7 @@ const Medicamentos = ({ navigation }) => {
           {currentStep === 2 && "Paso 2: Detalles del tratamiento"}
           {currentStep === 3 && "Paso 3: ¿Qué días?"}
           {currentStep === 4 && "Paso 4: ¿A qué hora?"}
-          {currentStep === 5 && "Paso 5: Confirmar"}
+          {currentStep === 5 && "Paso 5: Confirmación"}
         </Text>
         <View style={styles.progressBar}>
           <View
@@ -1083,9 +1134,11 @@ const Medicamentos = ({ navigation }) => {
 
     return (
       <View style={styles.configuracionContainer}>
-        {/* Pastilla seleccionada */}
+        {/* Información del medicamento */}
         <View style={styles.selectedPastillaCard}>
-          <Text style={styles.selectedPastillaTitle}>Tu medicamento:</Text>
+          <Text style={styles.selectedPastillaTitle}>
+            Medicamento seleccionado
+          </Text>
           <Text style={styles.selectedPastillaNombre}>
             {selectedPastilla?.nombre_comercial}
           </Text>
@@ -1093,7 +1146,7 @@ const Medicamentos = ({ navigation }) => {
 
         {/* Días seleccionados */}
         <View style={styles.inputContainer}>
-          <Text style={styles.inputLabel}>Días seleccionados:</Text>
+          <Text style={styles.inputLabel}>Días de toma:</Text>
           <Text style={styles.diasSeleccionadosText}>
             {diasSeleccionados
               .map((dia) => {
@@ -1112,13 +1165,12 @@ const Medicamentos = ({ navigation }) => {
               size={20}
               color="#7A2C34"
             />
-            <Text style={styles.horariosTitle}>Horarios Programados</Text>
+            <Text style={styles.horariosTitle}>Horarios programados</Text>
           </View>
           {horariosConfigurados.length > 0 ? (
             <>
               <Text style={styles.horariosSubtitle}>
-                Toca un horario para editarlo o usa el botón "Eliminar" para
-                quitarlo
+                Selecciona un horario para editarlo o elimínalo si es necesario.
               </Text>
               {horariosConfigurados.map((horario, index) => (
                 <View key={index} style={styles.horarioItem}>
@@ -1129,6 +1181,7 @@ const Medicamentos = ({ navigation }) => {
                         setShowTimePicker(true);
                         setHorarioEditando(index);
                       }}
+                      accessibilityLabel={`Editar horario ${index + 1}`}
                     >
                       <MaterialCommunityIcons
                         name="clock-outline"
@@ -1147,13 +1200,14 @@ const Medicamentos = ({ navigation }) => {
                         {horario.dosis || "1 tableta"}
                       </Text>
                       <Text style={styles.horarioInfoText}>
-                        Horario #{index + 1}
+                        Horario {index + 1}
                       </Text>
                     </View>
                   </View>
                   <TouchableOpacity
                     style={styles.deleteButton}
                     onPress={() => eliminarHorario(index)}
+                    accessibilityLabel={`Eliminar horario ${index + 1}`}
                   >
                     <MaterialCommunityIcons
                       name="delete"
@@ -1173,10 +1227,10 @@ const Medicamentos = ({ navigation }) => {
                 color="#ccc"
               />
               <Text style={styles.noHorariosText}>
-                No hay horarios configurados
+                No hay horarios configurados.
               </Text>
               <Text style={styles.noHorariosSubtext}>
-                Agrega al menos un horario para continuar
+                Agrega al menos un horario para continuar.
               </Text>
             </View>
           )}
@@ -1186,21 +1240,63 @@ const Medicamentos = ({ navigation }) => {
         <TouchableOpacity
           style={styles.agregarHorarioButton}
           onPress={agregarHorario}
+          accessibilityLabel="Agregar nuevo horario"
         >
           <MaterialCommunityIcons name="plus" size={20} color="#fff" />
-          <Text style={styles.agregarHorarioText}>Agregar Horario</Text>
+          <Text style={styles.agregarHorarioText}>Agregar horario</Text>
         </TouchableOpacity>
 
         {/* Configuración de Alarmas */}
-        <ConfiguracionSonidosAlarmas
-          onConfigChange={(config) => {
-            setAlarmasActivas(config.activar_alarmas);
-            setSonidoAlarma(config.sonido);
-            setVibracionAlarma(config.vibracion);
-            setRepetirAlarma(config.repetir_alarma);
-            setIntervaloRepeticion(config.intervalo_repeticion);
-          }}
-        />
+        <View style={styles.alarmasConfigSection}>
+          <Text style={styles.alarmasConfigTitle}>
+            Configuración de alarmas
+          </Text>
+          <Text style={styles.alarmasConfigDescription}>
+            Personaliza cómo deseas recibir las notificaciones para este
+            tratamiento. Puedes activar o desactivar las alarmas, elegir el
+            sonido y la vibración. Puedes escuchar el sonido seleccionado antes
+            de guardar.
+          </Text>
+          <ConfiguracionSonidosAlarmas
+            onConfigChange={(config) => {
+              setAlarmasActivas(config.activar_alarmas);
+              setSonidoAlarma(config.sonido);
+              setVibracionAlarma(config.vibracion);
+              setRepetirAlarma(config.repetir_alarma);
+              setIntervaloRepeticion(config.intervalo_repeticion);
+            }}
+          />
+          <TouchableOpacity
+            style={styles.testSoundButton}
+            onPress={async () => {
+              let soundUri;
+              switch (sonidoAlarma) {
+                case "gentle":
+                  soundUri = require("../assets/sonidos/gentle.mp3");
+                  break;
+                case "urgent":
+                  soundUri = require("../assets/sonidos/urgent.mp3");
+                  break;
+                case "melody":
+                  soundUri = require("../assets/sonidos/melody.mp3");
+                  break;
+                default:
+                  soundUri = require("../assets/sonidos/default.mp3");
+              }
+              try {
+                const { sound } = await Audio.Sound.createAsync(soundUri);
+                await sound.playAsync();
+              } catch (e) {
+                alert("No se pudo reproducir el sonido.");
+              }
+            }}
+            accessibilityLabel="Escuchar sonido de alarma"
+          >
+            <Text style={styles.testSoundButtonText}>
+              Escuchar sonido seleccionado
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   };
@@ -2272,15 +2368,7 @@ const Medicamentos = ({ navigation }) => {
                             : "Personaliza tu tratamiento con un nombre y fecha de finalización"}
                         </Text>
                       </View>
-                    </View>
-
-                    {/* Medicamento seleccionado */}
-                    <View style={styles.medicamentoSeleccionadoCard}>
-                      <MaterialCommunityIcons
-                        name="pill"
-                        size={20}
-                        color="#7A2C34"
-                      />
+                      {/* Corregido: props sueltos eliminados */}
                       <View style={styles.medicamentoSeleccionadoContent}>
                         <Text style={styles.medicamentoSeleccionadoLabel}>
                           Medicamento seleccionado:
