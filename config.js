@@ -1,9 +1,12 @@
 // Configuración de la API para diferentes entornos
+import { getDevelopmentUrl } from "./config-dev.js";
+
 const ENV = process.env.NODE_ENV || "development";
 
 const config = {
   development: {
-    BASE_URL: "http://192.168.1.54/smart-pill/smart_pill_api/",
+    // Usar la función de desarrollo para obtener la URL correcta
+    BASE_URL: getDevelopmentUrl(),
     PORT: 3000,
     CORS_ORIGIN: "*",
   },
@@ -26,7 +29,14 @@ export const API_CONFIG = {
     PASTILLAS_USUARIO: "/pastillas_usuario.php",
     REGISTRAR_MOVIMIENTO: "/registrar_movimiento.php",
     TRATAMIENTOS: "/tratamientos.php",
+    CREAR_PROGRAMACION: "/crear_programacion.php",
     ALARMAS_USUARIO: "/alarmas_usuario.php",
+    CREAR_ALARMA: "/crear_alarmas.php",
+    ACTUALIZAR_ALARMA: "/actualizar_alarma.php",
+    ELIMINAR_ALARMA: "/eliminar_alarmas.php",
+    CONFIRMAR_TOMA: "/confirmar_toma.php",
+    CATALOGO_PASTILLAS: "/catalogo_pastillas.php",
+    SONIDOS_DISPONIBLES: "/sonidos_disponibles.php",
   },
 
   // Configuración de headers por defecto
@@ -35,8 +45,8 @@ export const API_CONFIG = {
     Accept: "application/json",
   },
 
-  // Timeout para las peticiones (en milisegundos)
-  TIMEOUT: 10000,
+  // Timeout para las peticiones (en milisegundos) - aumentado a 30 segundos
+  TIMEOUT: 30000,
 };
 
 // Configuración del servidor
@@ -114,13 +124,16 @@ export const apiRequest = async (endpoint, options = {}) => {
     if (error.name === "AbortError") {
       return {
         success: false,
-        error: "Timeout: La petición tardó demasiado",
+        error: "TIMEOUT_ERROR",
+        message:
+          "La petición tardó demasiado. Verifica tu conexión a internet.",
         data: null,
       };
     }
     return {
       success: false,
-      error: error.message,
+      error: "NETWORK_ERROR",
+      message: error.message,
       data: null,
     };
   }

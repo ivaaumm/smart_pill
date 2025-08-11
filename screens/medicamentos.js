@@ -23,6 +23,7 @@ import {
 import { apiRequest } from "../config";
 import { UserContext } from "../UserContextProvider";
 import DateTimePicker from "@react-native-community/datetimepicker";
+import { ConfiguracionSonidosAlarmas } from "../componente-sonidos-simple";
 
 const Medicamentos = ({ navigation }) => {
   const { user } = useContext(UserContext);
@@ -67,6 +68,9 @@ const Medicamentos = ({ navigation }) => {
   // Estados para alarmas
   const [alarmasActivas, setAlarmasActivas] = useState(true);
   const [sonidoAlarma, setSonidoAlarma] = useState("default");
+  const [vibracionAlarma, setVibracionAlarma] = useState(1);
+  const [repetirAlarma, setRepetirAlarma] = useState(1);
+  const [intervaloRepeticion, setIntervaloRepeticion] = useState(5);
   const [mostrarConfiguracionAlarmas, setMostrarConfiguracionAlarmas] =
     useState(false);
 
@@ -407,7 +411,12 @@ const Medicamentos = ({ navigation }) => {
         dosis_por_toma: programacionData.dosis_por_toma,
         observaciones: "",
         horarios: horariosParaAPI,
-        alarmas_activas: true,
+        // Configuración de alarmas
+        activar_alarmas: alarmasActivas,
+        sonido_alarma: sonidoAlarma,
+        vibracion_alarma: vibracionAlarma,
+        repetir_alarma: repetirAlarma,
+        intervalo_repeticion: intervaloRepeticion,
       };
 
       console.log("📤 Enviando datos:", dataToSend);
@@ -426,22 +435,17 @@ const Medicamentos = ({ navigation }) => {
 
         if (response.success && response.data.success) {
           const programacionId = response.data.programacion_id;
+          const horariosCreados = response.data.horarios_creados || 0;
+          const alarmasCreadas = response.data.alarmas_creadas || 0;
 
-          // Crear alarmas si están activadas
-          if (alarmasActivas) {
-            const alarmasCreadas = await crearAlarmas(programacionId);
-            if (alarmasCreadas) {
-              alert(
-                "¡Tratamiento programado exitosamente con alarmas activadas!"
-              );
-            } else {
-              alert(
-                "¡Tratamiento programado exitosamente! (Error al crear alarmas)"
-              );
-            }
-          } else {
-            alert("¡Tratamiento programado exitosamente!");
+          let mensaje = `¡Tratamiento programado exitosamente con ${horariosCreados} horarios!`;
+          if (alarmasActivas && alarmasCreadas > 0) {
+            mensaje += `\nSe configuraron ${alarmasCreadas} alarmas.`;
+          } else if (alarmasActivas) {
+            mensaje += "\nLas alarmas se configurarán automáticamente.";
           }
+
+          alert(mensaje);
 
           setModalVisible(false);
           resetearFormulario();
@@ -1188,63 +1192,15 @@ const Medicamentos = ({ navigation }) => {
         </TouchableOpacity>
 
         {/* Configuración de Alarmas */}
-        <View style={styles.alarmasContainer}>
-          <View style={styles.alarmasTitleContainer}>
-            <MaterialCommunityIcons name="bell" size={20} color="#7A2C34" />
-            <Text style={styles.alarmasTitle}>Configuración de Alarmas</Text>
-          </View>
-
-          {/* Interruptor para activar/desactivar alarmas */}
-          <View style={styles.alarmaSwitchContainer}>
-            <View style={styles.alarmaSwitchInfo}>
-              <Text style={styles.alarmaSwitchLabel}>Activar alarmas</Text>
-              <Text style={styles.alarmaSwitchDescription}>
-                Recibir notificaciones para cada toma programada
-              </Text>
-            </View>
-            <Switch
-              value={alarmasActivas}
-              onValueChange={setAlarmasActivas}
-              trackColor={{ false: "#e0e0e0", true: "#7A2C34" }}
-              thumbColor={alarmasActivas ? "#fff" : "#f4f3f4"}
-            />
-          </View>
-
-          {/* Configuración de sonido (solo si las alarmas están activas) */}
-          {alarmasActivas && (
-            <View style={styles.sonidoContainer}>
-              <Text style={styles.sonidoLabel}>Sonido de alarma:</Text>
-              <View style={styles.sonidoOptions}>
-                {[
-                  { value: "default", label: "Predeterminado" },
-                  { value: "gentle", label: "Suave" },
-                  { value: "urgent", label: "Urgente" },
-                  { value: "melody", label: "Melodía" },
-                ].map((opcion) => (
-                  <TouchableOpacity
-                    key={opcion.value}
-                    style={[
-                      styles.sonidoOption,
-                      sonidoAlarma === opcion.value &&
-                        styles.sonidoOptionSelected,
-                    ]}
-                    onPress={() => setSonidoAlarma(opcion.value)}
-                  >
-                    <Text
-                      style={[
-                        styles.sonidoOptionText,
-                        sonidoAlarma === opcion.value &&
-                          styles.sonidoOptionTextSelected,
-                      ]}
-                    >
-                      {opcion.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-          )}
-        </View>
+        <ConfiguracionSonidosAlarmas
+          onConfigChange={(config) => {
+            setAlarmasActivas(config.activar_alarmas);
+            setSonidoAlarma(config.sonido);
+            setVibracionAlarma(config.vibracion);
+            setRepetirAlarma(config.repetir_alarma);
+            setIntervaloRepeticion(config.intervalo_repeticion);
+          }}
+        />
       </View>
     );
   };

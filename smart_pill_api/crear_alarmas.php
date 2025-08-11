@@ -11,122 +11,142 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 include "conexion.php";
 
 try {
-    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-        throw new Exception("Método no permitido");
-    }
-
-    $input = json_decode(file_get_contents('php://input'), true);
+    $data = json_decode(file_get_contents("php://input"));
     
-    if (!$input) {
+    if (!$data) {
         throw new Exception("Datos JSON inválidos");
     }
-
-    $usuario_id = intval($input['usuario_id']);
-    $programacion_id = intval($input['programacion_id']);
-    $activo = isset($input['activo']) ? intval($input['activo']) : 1;
-    $sonido = isset($input['sonido']) ? $conn->real_escape_string($input['sonido']) : 'default';
     
-    if ($usuario_id <= 0 || $programacion_id <= 0) {
-        throw new Exception("IDs inválidos");
-    }
-
-    // Verificar que la programación existe y pertenece al usuario
-    $sql_verificar = "SELECT programacion_id FROM programacion_tratamientos 
-                      WHERE programacion_id = $programacion_id AND usuario_id = $usuario_id";
-    $res_verificar = $conn->query($sql_verificar);
-    
-    if (!$res_verificar || $res_verificar->num_rows === 0) {
-        throw new Exception("Programación no encontrada o no autorizada");
-    }
-
-    // Obtener los horarios de la programación
-    $sql_horarios = "SELECT horario_id, dia_semana, hora, dosis 
-                     FROM horarios_tratamiento 
-                     WHERE tratamiento_id = $programacion_id";
-    $res_horarios = $conn->query($sql_horarios);
-    
-    if (!$res_horarios) {
-        throw new Exception("Error al obtener horarios: " . $conn->error);
-    }
-
-    $alarmas_creadas = 0;
-    $errores = [];
-
-    // Crear una alarma por cada horario
-    while ($horario = $res_horarios->fetch_assoc()) {
-        $dia_semana = $conn->real_escape_string($horario['dia_semana']);
-        $hora = $conn->real_escape_string($horario['hora']);
-        $dosis = $conn->real_escape_string($horario['dosis']);
-        
-        // Verificar si ya existe una alarma para este horario
-        $sql_existe = "SELECT alarma_id FROM alarmas 
-                       WHERE usuario_id = $usuario_id 
-                       AND tratamiento_id = $programacion_id 
-                       AND dia_semana = '$dia_semana' 
-                       AND hora = '$hora'";
-        $res_existe = $conn->query($sql_existe);
-        
-        if ($res_existe && $res_existe->num_rows > 0) {
-            // Actualizar alarma existente
-            $alarma_existente = $res_existe->fetch_assoc();
-            $alarma_id = $alarma_existente['alarma_id'];
-            
-            $sql_update = "UPDATE alarmas SET 
-                           activo = $activo,
-                           sonido = '$sonido',
-                           fecha_actualizacion = NOW()
-                           WHERE alarma_id = $alarma_id";
-            
-            if ($conn->query($sql_update)) {
-                $alarmas_creadas++;
-            } else {
-                $errores[] = "Error actualizando alarma para $dia_semana $hora: " . $conn->error;
-            }
-        } else {
-            // Crear nueva alarma
-            $sql_insert = "INSERT INTO alarmas (
-                usuario_id, 
-                tratamiento_id, 
-                dia_semana, 
-                hora, 
-                dosis, 
-                activo, 
-                sonido, 
-                estado,
-                fecha_creacion
-            ) VALUES (
-                $usuario_id,
-                $programacion_id,
-                '$dia_semana',
-                '$hora',
-                '$dosis',
-                $activo,
-                '$sonido',
-                'pendiente',
-                NOW()
-            )";
-            
-            if ($conn->query($sql_insert)) {
-                $alarmas_creadas++;
-            } else {
-                $errores[] = "Error creando alarma para $dia_semana $hora: " . $conn->error;
-            }
+    // Validar campos requeridos
+    $campos_requeridos = ['usuario_id', 'hora_inicio', 'repeticion_tipo'];
+    foreach ($campos_requeridos as $campo) {
+        if (!isset($data->$campo)) {
+            throw new Exception("Campo requerido faltante: $campo");
         }
     }
-
-    if ($alarmas_creadas > 0) {
-        echo json_encode([
-            "success" => true,
-            "message" => "Se crearon/actualizaron $alarmas_creadas alarmas",
-            "alarmas_creadas" => $alarmas_creadas,
-            "errores" => $errores
-        ]);
-    } else {
-        throw new Exception("No se pudieron crear alarmas. Errores: " . implode(", ", $errores));
+    
+    $usuario_id = intval($data->usuario_id);
+    $tratamiento_id = isset($data->tratamiento_id) ? intval($data->tratamiento_id) : null;
+    $remedio_global_id = isset($data->remedio_global_id) ? intval($data->remedio_global_id) : null;
+    $dosis = $conn->real_escape_string($data->dosis ?? '');
+    $nombre_alarma = $conn->real_escape_string($data->nombre_alarma ?? '');
+    $hora_inicio = $conn->real_escape_string($data->hora_inicio);
+    $fecha_inicio = $conn->real_escape_string($data->fecha_inicio ?? date('Y-m-d'));
+    $repeticion_tipo = $conn->real_escape_string($data->repeticion_tipo);
+    $repeticion_intervalo = intval($data->repeticion_intervalo ?? 1);
+    $dias_semana = $conn->real_escape_string($data->dias_semana ?? '');
+    $fecha_fin = $conn->real_escape_string($data->fecha_fin ?? null);
+    $activo = intval($data->activo ?? 1);
+    
+    // Validar que el usuario existe
+    $sql_usuario = "SELECT usuario_id FROM usuarios WHERE usuario_id = $usuario_id";
+    $res_usuario = $conn->query($sql_usuario);
+    if (!$res_usuario || $res_usuario->num_rows === 0) {
+        throw new Exception("Usuario no encontrado");
     }
     
+    // Validar que el tratamiento existe si se proporciona
+    if ($tratamiento_id) {
+        $sql_tratamiento = "SELECT programacion_id FROM programacion_tratamientos WHERE programacion_id = $tratamiento_id AND usuario_id = $usuario_id";
+        $res_tratamiento = $conn->query($sql_tratamiento);
+        if (!$res_tratamiento || $res_tratamiento->num_rows === 0) {
+            throw new Exception("Tratamiento no encontrado o no pertenece al usuario");
+        }
+    }
+    
+    // Validar que el remedio existe si se proporciona
+    if ($remedio_global_id) {
+        $sql_remedio = "SELECT remedio_global_id FROM remedio_global WHERE remedio_global_id = $remedio_global_id";
+        $res_remedio = $conn->query($sql_remedio);
+        if (!$res_remedio || $res_remedio->num_rows === 0) {
+            throw new Exception("Remedio no encontrado");
+        }
+    }
+    
+    // Validar formato de hora
+    if (!preg_match('/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/', $hora_inicio)) {
+        throw new Exception("Formato de hora inválido. Use HH:MM");
+    }
+    
+    // Validar tipo de repetición
+    $tipos_validos = ['diaria', 'semanal', 'mensual', 'una_vez'];
+    if (!in_array($repeticion_tipo, $tipos_validos)) {
+        throw new Exception("Tipo de repetición inválido");
+    }
+    
+    // Si es semanal, validar días de la semana
+    if ($repeticion_tipo === 'semanal' && empty($dias_semana)) {
+        throw new Exception("Para repetición semanal, debe especificar días de la semana");
+    }
+    
+    // Insertar la alarma
+    $sql = "INSERT INTO alarmas (
+                usuario_id, 
+                tratamiento_id, 
+                remedio_global_id, 
+                dosis, 
+                nombre_alarma, 
+                hora_inicio, 
+                fecha_inicio, 
+                repeticion_tipo, 
+                repeticion_intervalo, 
+                dias_semana, 
+                fecha_fin, 
+                activo, 
+                estado
+            ) VALUES (
+                $usuario_id,
+                " . ($tratamiento_id ? $tratamiento_id : "NULL") . ",
+                " . ($remedio_global_id ? $remedio_global_id : "NULL") . ",
+                '$dosis',
+                '$nombre_alarma',
+                '$hora_inicio',
+                '$fecha_inicio',
+                '$repeticion_tipo',
+                $repeticion_intervalo,
+                '$dias_semana',
+                " . ($fecha_fin ? "'$fecha_fin'" : "NULL") . ",
+                $activo,
+                'pendiente'
+            )";
+    
+    if (!$conn->query($sql)) {
+        throw new Exception("Error al crear la alarma: " . $conn->error);
+    }
+    
+    $alarma_id = $conn->insert_id;
+    
+    // Obtener la alarma creada con información completa
+    $sql_alarma = "SELECT 
+                        a.*,
+                        pt.nombre_tratamiento,
+                        rg.nombre_comercial,
+                        rg.descripcion,
+                        rg.presentacion
+                    FROM alarmas a
+                    LEFT JOIN programacion_tratamientos pt ON a.tratamiento_id = pt.programacion_id
+                    LEFT JOIN remedio_global rg ON a.remedio_global_id = rg.remedio_global_id
+                    WHERE a.alarma_id = $alarma_id";
+    
+    $res_alarma = $conn->query($sql_alarma);
+    $alarma_creada = $res_alarma->fetch_assoc();
+    
+    echo json_encode([
+        "success" => true,
+        "message" => "Alarma creada exitosamente",
+        "alarma_id" => $alarma_id,
+        "data" => $alarma_creada
+    ]);
+    
 } catch (Exception $e) {
-    echo json_encode(["success" => false, "error" => $e->getMessage()]);
+    echo json_encode([
+        "success" => false,
+        "error" => $e->getMessage(),
+        "debug_info" => [
+            "php_version" => PHP_VERSION,
+            "timestamp" => date('Y-m-d H:i:s')
+        ]
+    ]);
 }
 
 $conn->close();

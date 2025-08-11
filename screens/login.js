@@ -12,6 +12,7 @@ import {
 import { apiRequest, API_CONFIG } from "../credenciales";
 import { useUser } from "../UserContextProvider";
 import { Ionicons } from "@expo/vector-icons";
+import { testServerConnection } from "../test-connection";
 
 export default function Login(props) {
   const [usuario, setUsuario] = React.useState("");
@@ -48,10 +49,24 @@ export default function Login(props) {
         );
         props.navigation.navigate("Home");
       } else {
-        Alert.alert(
-          "Error al iniciar sesión",
-          response.data?.error || "Credenciales incorrectas"
-        );
+        // Manejar diferentes tipos de errores
+        if (response.error === "TIMEOUT_ERROR") {
+          Alert.alert(
+            "Error de conexión",
+            "La petición tardó demasiado. Verifica tu conexión a internet y que el servidor esté funcionando."
+          );
+        } else if (response.error === "NETWORK_ERROR") {
+          Alert.alert(
+            "Error de red",
+            "No se pudo conectar con el servidor. Verifica tu conexión a internet."
+          );
+        } else {
+          // Error de credenciales o respuesta del servidor
+          Alert.alert(
+            "Error al iniciar sesión",
+            response.data?.error || "Credenciales incorrectas"
+          );
+        }
       }
     } catch (error) {
       Alert.alert("Error de conexión", "No se pudo conectar con el servidor");
@@ -109,6 +124,21 @@ export default function Login(props) {
           style={{ marginTop: 10 }}
         >
           <Text style={styles.link}>¿No tienes cuenta? Regístrate</Text>
+        </TouchableOpacity>
+
+        {/* Botón de prueba de conectividad (solo para desarrollo) */}
+        <TouchableOpacity
+          onPress={testServerConnection}
+          style={{
+            marginTop: 20,
+            padding: 10,
+            backgroundColor: "#f0f0f0",
+            borderRadius: 10,
+          }}
+        >
+          <Text style={{ textAlign: "center", color: "#666" }}>
+            🔍 Probar conexión
+          </Text>
         </TouchableOpacity>
       </View>
     </View>
