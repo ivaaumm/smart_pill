@@ -17,49 +17,13 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import {
   MaterialCommunityIcons,
+  MaterialIcons,
   Ionicons,
   FontAwesome5,
 } from "@expo/vector-icons";
 import { apiRequest } from "../config";
 import { UserContext } from "../UserContextProvider";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import { ConfiguracionSonidosAlarmas } from "../componente-sonidos-simple";
-import { Audio } from "expo-av";
-import * as Notifications from "expo-notifications";
-// Función para programar alarmas locales según los horarios y días
-const programarAlarmasLocales = async (tratamiento) => {
-  const dias = tratamiento.dias_seleccionados || [];
-  const horarios = tratamiento.horarios || [];
-  const diasMap = {
-    lunes: 1,
-    martes: 2,
-    miercoles: 3,
-    jueves: 4,
-    viernes: 5,
-    sabado: 6,
-    domingo: 0,
-  };
-  for (const dia of dias) {
-    for (const horario of horarios) {
-      const [hour, minute] = horario.hora.split(":");
-      await Notifications.scheduleNotificationAsync({
-        content: {
-          title: "Hora de tu medicamento",
-          body: `Toma ${horario.dosis || "1 tableta"} de ${
-            tratamiento.nombre_tratamiento || tratamiento.nombre_comercial
-          }`,
-          sound: true, // Sonido por defecto del sistema
-        },
-        trigger: {
-          weekday: diasMap[dia],
-          hour: parseInt(hour),
-          minute: parseInt(minute),
-          repeats: true,
-        },
-      });
-    }
-  }
-};
 
 const Medicamentos = ({ navigation }) => {
   const { user } = useContext(UserContext);
@@ -72,7 +36,7 @@ const Medicamentos = ({ navigation }) => {
   const [filteredPastillas, setFilteredPastillas] = useState([]);
   const [selectedPastilla, setSelectedPastilla] = useState(null);
   const [searchText, setSearchText] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true); // Iniciar como true para mostrar el indicador de carga
   const [error, setError] = useState(null);
 
   // Estados para el flujo de programación simplificado
@@ -101,15 +65,6 @@ const Medicamentos = ({ navigation }) => {
   const [programacionDetalles, setProgramacionDetalles] = useState(null);
   const [editandoProgramacion, setEditandoProgramacion] = useState(null);
 
-  // Estados para alarmas
-  const [alarmasActivas, setAlarmasActivas] = useState(true);
-  const [sonidoAlarma, setSonidoAlarma] = useState("default");
-  const [vibracionAlarma, setVibracionAlarma] = useState(1);
-  const [repetirAlarma, setRepetirAlarma] = useState(1);
-  const [intervaloRepeticion, setIntervaloRepeticion] = useState(5);
-  const [mostrarConfiguracionAlarmas, setMostrarConfiguracionAlarmas] =
-    useState(false);
-
   // Log para depurar el estado de las pastillas
   useEffect(() => {
     console.log(
@@ -122,8 +77,15 @@ const Medicamentos = ({ navigation }) => {
 
   // Cargar programaciones al montar el componente
   useEffect(() => {
+    console.log("🔍 Efecto de usuario cambiado, usuario:", user?.usuario_id);
     if (user?.usuario_id) {
+      console.log("🔍 Usuario detectado, cargando datos...");
       cargarProgramaciones();
+      cargarPastillas(); // Asegurarnos de cargar pastillas cuando hay un usuario
+    } else {
+      console.log("⚠️ No hay usuario, limpiando datos");
+      setPastillas([]);
+      setFilteredPastillas([]);
     }
   }, [user?.usuario_id]);
 
@@ -133,76 +95,41 @@ const Medicamentos = ({ navigation }) => {
     cargarPastillas();
   }, []);
 
-  // Solicitar permisos de notificación al montar el componente
-  useEffect(() => {
-    Notifications.requestPermissionsAsync();
-  }, []);
-
   // Cargar programaciones del usuario
   const cargarProgramaciones = async () => {
-    console.log("🔄 Iniciando cargarProgramaciones...");
-    if (!user || !user.usuario_id) {
-      console.log("Usuario no disponible para cargar programaciones");
-      return;
-    }
-
-    console.log("👤 Usuario ID:", user.usuario_id);
+    if (!user) return;
+    
     setLoadingProgramaciones(true);
     try {
-      const response = await apiRequest(
-        `/obtener_programaciones.php?usuario_id=${user.usuario_id}`
-      );
-      console.log("📊 Programaciones cargadas:", response);
-      console.log("📊 Datos de programaciones:", response.data?.data);
-      console.log("📊 Tipo de datos:", typeof response.data?.data);
-      console.log("📊 Es array:", Array.isArray(response.data?.data));
-
-      if (response.success && response.data.success) {
-        const programacionesData = response.data.data || [];
-        console.log("📊 Programaciones a guardar:", programacionesData);
-
-        // Verificar la estructura de cada programación
-        if (Array.isArray(programacionesData)) {
-          programacionesData.forEach((prog, index) => {
-            console.log(`📊 Programación ${index}:`, prog);
-            console.log(`📊 Horarios de programación ${index}:`, prog.horarios);
-            console.log(`📊 Tipo de datos:`, typeof prog.horarios);
-            console.log(
-              `📊 Es array de horarios:`,
-              Array.isArray(prog.horarios)
-            );
-          });
+      const response = await apiRequest(`obtener_programaciones.php?usuario_id=${user.usuario_id}`);
+      console.log('📊 Respuesta de programaciones:', response);
+      
+      // Manejar la respuesta anidada
+      let programacionesData = [];
+      
+      if (response && response.data) {
+        // Si la respuesta tiene un objeto data con un array data dentro
+        if (response.data.data && Array.isArray(response.data.data)) {
+          programacionesData = response.data.data;
+        } 
+        // Si la respuesta es directamente un array
+        else if (Array.isArray(response.data)) {
+          programacionesData = response.data;
         }
-
-        console.log(
-          "📊 Antes de setProgramaciones:",
-          programaciones.length,
-          "tratamientos"
-        );
+      }
+      
+      if (programacionesData.length > 0) {
+        console.log(`✅ Se cargaron ${programacionesData.length} programaciones`);
         setProgramaciones(programacionesData);
-        console.log(
-          "✅ Estado de programaciones actualizado:",
-          programacionesData.length,
-          "tratamientos"
-        );
-        console.log("📊 Datos de programaciones:", programacionesData);
       } else {
-        console.log("Error al cargar programaciones:", response.data);
-        setProgramaciones([]); // Establecer array vacío en caso de error
+        console.warn('No se encontraron programaciones o la respuesta tiene un formato inesperado');
+        setProgramaciones([]);
       }
     } catch (error) {
-      console.log("Error de conexión:", error.message);
-      setProgramaciones([]); // Establecer array vacío en caso de error
+      console.error("Error al cargar programaciones:", error);
     } finally {
       setLoadingProgramaciones(false);
     }
-  };
-
-  // Función para manejar el refresh
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await cargarProgramaciones();
-    setRefreshing(false);
   };
 
   // Cargar pastillas disponibles
@@ -210,40 +137,55 @@ const Medicamentos = ({ navigation }) => {
     setLoading(true);
     setError(null);
     console.log("🔄 Iniciando carga de pastillas...");
+    console.log("🔍 Estado actual - loading:", loading, "error:", error);
 
     try {
+      console.log("🔍 Realizando petición a /pastillas_usuario.php");
       const response = await apiRequest(`/pastillas_usuario.php`);
-      console.log("🔍 Respuesta completa:", response);
+      console.log("✅ Respuesta recibida:", response);
 
-      if (response.success && response.data.success) {
-        const pastillasData = response.data.data || [];
-        console.log("📊 Datos recibidos:", pastillasData);
-        console.log("📊 Cantidad de pastillas:", pastillasData.length);
+      if (!response) {
+        throw new Error("No se recibió respuesta del servidor");
+      }
 
+      // Verificar si la respuesta tiene la estructura esperada
+      if (response.success && response.data && response.data.success) {
+        const pastillasData = Array.isArray(response.data.data) ? response.data.data : [];
+        console.log(`📊 Se encontraron ${pastillasData.length} pastillas`);
+        
         if (pastillasData.length > 0) {
-          console.log("📊 Primer elemento:", pastillasData[0]);
+          console.log("📋 Primeras pastillas:", pastillasData.slice(0, 2)); // Mostrar solo las primeras 2 para no saturar la consola
           setPastillas(pastillasData);
           setFilteredPastillas(pastillasData);
-          console.log("✅ Estados actualizados correctamente");
         } else {
-          console.log("No se encontraron pastillas en la base de datos");
+          console.log("ℹ️ No se encontraron pastillas en la base de datos");
+          setPastillas([]);
+          setFilteredPastillas([]);
           setError("No se encontraron medicamentos en la base de datos");
         }
       } else {
-        console.log("Error en la respuesta:", response.data);
-        setError(
-          response.data?.error ||
-            response.data?.message ||
-            "Error al cargar las pastillas"
-        );
+        const errorMsg = response.data?.error || response.data?.message || "Error en el formato de la respuesta";
+        console.error("❌ Error en la respuesta:", errorMsg);
+        setError(errorMsg);
+        setPastillas([]);
+        setFilteredPastillas([]);
       }
     } catch (error) {
-      console.log("Error de conexión:", error.message);
-      setError("Error de conexión: " + error.message);
+      console.error("❌ Error al cargar pastillas:", error);
+      setError(`Error al cargar los medicamentos: ${error.message}`);
+      setPastillas([]);
+      setFilteredPastillas([]);
     } finally {
       setLoading(false);
-      console.log("🏁 Carga de pastillas completada");
+      console.log("🏁 Finalizada la carga de pastillas");
     }
+  };
+
+  // Función para manejar el refresh
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await Promise.all([cargarProgramaciones(), cargarPastillas()]);
+    setRefreshing(false);
   };
 
   // Filtrar pastillas por búsqueda
@@ -335,16 +277,7 @@ const Medicamentos = ({ navigation }) => {
       alert("No hay días seleccionados");
       return;
     }
-
-    const nuevoHorario = {
-      hora: horarioTemporal || "08:00",
-      dosis: programacionData.dosis_por_toma || "1",
-    };
-
-    setProgramacionData((prev) => ({
-      ...prev,
-      horarios: [...(prev.horarios || []), nuevoHorario],
-    }));
+    mostrarSelectorHora();
   };
 
   // Eliminar horario
@@ -374,6 +307,39 @@ const Medicamentos = ({ navigation }) => {
         },
       ]
     );
+  };
+
+  // Manejador del selector de hora
+  const handleTimeChange = (event, selectedTime) => {
+    setShowTimePicker(false);
+    
+    if (selectedTime) {
+      const hours = selectedTime.getHours().toString().padStart(2, '0');
+      const minutes = selectedTime.getMinutes().toString().padStart(2, '0');
+      const formattedTime = `${hours}:${minutes}`;
+      
+      setProgramacionData(prev => {
+        const newHorario = { hora: formattedTime, dosis: 1 };
+        
+        if (horarioEditando !== null) {
+          // Si estamos editando un horario existente
+          return {
+            ...prev,
+            horarios: prev.horarios.map((h, i) => 
+              i === horarioEditando ? { ...h, hora: formattedTime } : h
+            )
+          };
+        } else {
+          // Si estamos agregando un nuevo horario
+          return {
+            ...prev,
+            horarios: [...(prev.horarios || []), newHorario]
+          };
+        }
+      });
+      
+      setHorarioEditando(null);
+    }
   };
 
   // Cambiar hora de un horario
@@ -452,12 +418,6 @@ const Medicamentos = ({ navigation }) => {
         dosis_por_toma: programacionData.dosis_por_toma,
         observaciones: "",
         horarios: horariosParaAPI,
-        // Configuración de alarmas
-        activar_alarmas: alarmasActivas,
-        sonido_alarma: sonidoAlarma,
-        vibracion_alarma: vibracionAlarma,
-        repetir_alarma: repetirAlarma,
-        intervalo_repeticion: intervaloRepeticion,
       };
 
       console.log("📤 Enviando datos:", dataToSend);
@@ -477,24 +437,7 @@ const Medicamentos = ({ navigation }) => {
         if (response.success && response.data.success) {
           const programacionId = response.data.programacion_id;
           const horariosCreados = response.data.horarios_creados || 0;
-          const alarmasCreadas = response.data.alarmas_creadas || 0;
-
-          // Programar alarmas locales en el dispositivo
-          try {
-            await programarAlarmasLocales({
-              ...programacionData,
-              nombre_comercial: selectedPastilla?.nombre_comercial,
-            });
-          } catch (e) {
-            console.log("Error al programar alarmas locales:", e);
-          }
-
           let mensaje = `¡Tratamiento programado exitosamente con ${horariosCreados} horarios!`;
-          if (alarmasActivas && alarmasCreadas > 0) {
-            mensaje += `\nSe configuraron ${alarmasCreadas} alarmas.`;
-          } else if (alarmasActivas) {
-            mensaje += "\nLas alarmas se configurarán automáticamente.";
-          }
 
           alert(mensaje);
 
@@ -534,9 +477,7 @@ const Medicamentos = ({ navigation }) => {
     setPastillas([]);
     setFilteredPastillas([]);
     setError(null);
-    // Resetear estados de alarmas
-    setAlarmasActivas(true);
-    setSonidoAlarma("default");
+    // Resetear estados
   };
 
   // Función para editar programación
@@ -654,7 +595,6 @@ const Medicamentos = ({ navigation }) => {
         dosis_por_toma: programacionData.dosis_por_toma,
         observaciones: "",
         horarios: horariosParaAPI,
-        alarmas_activas: true,
       };
 
       console.log("📤 Enviando datos de actualización:", dataToSend);
@@ -778,95 +718,9 @@ const Medicamentos = ({ navigation }) => {
     }
   };
 
-  // Función para crear alarmas
-  const crearAlarmas = async (programacionId) => {
-    if (!user || !user.usuario_id) {
-      console.log("Usuario no disponible para crear alarmas");
-      return false;
-    }
+  
 
-    try {
-      const response = await apiRequest(`/crear_alarmas.php`, {
-        method: "POST",
-        body: JSON.stringify({
-          usuario_id: user.usuario_id,
-          programacion_id: programacionId,
-          activo: alarmasActivas ? 1 : 0,
-          sonido: sonidoAlarma,
-        }),
-      });
-
-      if (response.success) {
-        console.log("✅ Alarmas creadas correctamente:", response.message);
-        return true;
-      } else {
-        console.error("Error al crear alarmas:", response.error);
-        Alert.alert("Error", "No se pudieron crear las alarmas");
-        return false;
-      }
-    } catch (error) {
-      console.error("Error en crearAlarmas:", error);
-      Alert.alert("Error", "Error de conexión al crear alarmas");
-      return false;
-    }
-  };
-
-  // Función para obtener alarmas de una programación
-  const obtenerAlarmasProgramacion = async (programacionId) => {
-    if (!user || !user.usuario_id) {
-      console.log("Usuario no disponible para obtener alarmas");
-      return null;
-    }
-
-    try {
-      const response = await apiRequest(
-        `/alarmas_programacion.php?usuario_id=${user.usuario_id}&programacion_id=${programacionId}`
-      );
-
-      if (response.success) {
-        console.log("✅ Alarmas obtenidas:", response.data);
-        return response.data;
-      } else {
-        console.error("Error al obtener alarmas:", response.error);
-        return null;
-      }
-    } catch (error) {
-      console.error("Error en obtenerAlarmasProgramacion:", error);
-      return null;
-    }
-  };
-
-  // Función para actualizar alarma
-  const actualizarAlarma = async (alarmaId, datos) => {
-    if (!user || !user.usuario_id) {
-      console.log("Usuario no disponible para actualizar alarma");
-      return false;
-    }
-
-    try {
-      const response = await apiRequest(`/actualizar_alarma.php`, {
-        method: "PUT",
-        body: JSON.stringify({
-          alarma_id: alarmaId,
-          usuario_id: user.usuario_id,
-          ...datos,
-        }),
-      });
-
-      if (response.success) {
-        console.log("✅ Alarma actualizada correctamente");
-        return true;
-      } else {
-        console.error("Error al actualizar alarma:", response.error);
-        Alert.alert("Error", "No se pudo actualizar la alarma");
-        return false;
-      }
-    } catch (error) {
-      console.error("Error en actualizarAlarma:", error);
-      Alert.alert("Error", "Error de conexión al actualizar alarma");
-      return false;
-    }
-  };
+  
 
   // Renderizar item de pastilla
   const renderPastillaItem = ({ item }) => (
@@ -1135,13 +989,15 @@ const Medicamentos = ({ navigation }) => {
     return (
       <View style={styles.configuracionContainer}>
         {/* Información del medicamento */}
-        <View style={styles.selectedPastillaCard}>
-          <Text style={styles.selectedPastillaTitle}>
-            Medicamento seleccionado
-          </Text>
-          <Text style={styles.selectedPastillaNombre}>
-            {selectedPastilla?.nombre_comercial}
-          </Text>
+         {/* Header con información del medicamento */}
+         <View style={styles.stepHeader}>
+          <MaterialCommunityIcons name="pill" size={24} color="#7A2C34" />
+          <View style={styles.stepHeaderContent}>
+            <Text style={styles.stepHeaderTitle}>Medicamento seleccionado</Text>
+            <Text style={styles.stepHeaderSubtitle}>
+              {selectedPastilla?.nombre_comercial}
+            </Text>
+          </View>
         </View>
 
         {/* Días seleccionados */}
@@ -1162,7 +1018,7 @@ const Medicamentos = ({ navigation }) => {
           <View style={styles.horariosTitleContainer}>
             <MaterialCommunityIcons
               name="table-clock"
-              size={20}
+              size={35}
               color="#7A2C34"
             />
             <Text style={styles.horariosTitle}>Horarios programados</Text>
@@ -1172,327 +1028,259 @@ const Medicamentos = ({ navigation }) => {
               <Text style={styles.horariosSubtitle}>
                 Selecciona un horario para editarlo o elimínalo si es necesario.
               </Text>
+              <View style={styles.horariosListContainer}>
               {horariosConfigurados.map((horario, index) => (
-                <View key={index} style={styles.horarioItem}>
-                  <View style={styles.horarioInfo}>
-                    <TouchableOpacity
-                      style={styles.horaButton}
-                      onPress={() => {
-                        setShowTimePicker(true);
-                        setHorarioEditando(index);
-                      }}
-                      accessibilityLabel={`Editar horario ${index + 1}`}
-                    >
+                <View key={index} style={styles.horarioCard}>
+                  <View style={styles.horarioLeftBorder} />
+                  <TouchableOpacity
+                    style={styles.horaButton}
+                    onPress={() => {
+                      setShowTimePicker(true);
+                      setHorarioEditando(index);
+                    }}
+                    accessibilityLabel={`Editar horario ${index + 1}`}
+                  >
+                    <View style={styles.horarioContent}>
                       <MaterialCommunityIcons
                         name="clock-outline"
-                        size={16}
+                        size={24}
                         color="#7A2C34"
                       />
                       <Text style={styles.horarioHora}>{horario.hora}</Text>
-                      <MaterialCommunityIcons
-                        name="pencil"
-                        size={14}
-                        color="#7A2C34"
-                      />
-                    </TouchableOpacity>
-                    <View style={styles.horarioDetails}>
-                      <Text style={styles.horarioDosisText}>
-                        {horario.dosis || "1 tableta"}
-                      </Text>
-                      <Text style={styles.horarioInfoText}>
-                        Horario {index + 1}
-                      </Text>
                     </View>
-                  </View>
+                  </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.deleteButton}
-                    onPress={() => eliminarHorario(index)}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      eliminarHorario(index);
+                    }}
                     accessibilityLabel={`Eliminar horario ${index + 1}`}
                   >
                     <MaterialCommunityIcons
-                      name="delete"
-                      size={16}
-                      color="#fff"
+                      name="trash-can-outline"
+                      size={40}
+                      color="#7A2C34"
                     />
-                    <Text style={styles.deleteButtonText}>Eliminar</Text>
                   </TouchableOpacity>
                 </View>
               ))}
+              </View>
             </>
           ) : (
             <View style={styles.noHorariosContainer}>
               <MaterialCommunityIcons
                 name="clock-outline"
                 size={48}
-                color="#ccc"
+                color="#cbd5e0"
               />
-              <Text style={styles.noHorariosText}>
-                No hay horarios configurados.
-              </Text>
+              <Text style={styles.noHorariosText}>No hay horarios configurados</Text>
               <Text style={styles.noHorariosSubtext}>
-                Agrega al menos un horario para continuar.
+                Agrega al menos un horario para continuar
               </Text>
             </View>
           )}
-        </View>
 
-        {/* Botón para agregar horario */}
-        <TouchableOpacity
-          style={styles.agregarHorarioButton}
-          onPress={agregarHorario}
-          accessibilityLabel="Agregar nuevo horario"
-        >
-          <MaterialCommunityIcons name="plus" size={20} color="#fff" />
-          <Text style={styles.agregarHorarioText}>Agregar horario</Text>
-        </TouchableOpacity>
-
-        {/* Configuración de Alarmas */}
-        <View style={styles.alarmasConfigSection}>
-          <Text style={styles.alarmasConfigTitle}>
-            Configuración de alarmas
-          </Text>
-          <Text style={styles.alarmasConfigDescription}>
-            Personaliza cómo deseas recibir las notificaciones para este
-            tratamiento. Puedes activar o desactivar las alarmas, elegir el
-            sonido y la vibración. Puedes escuchar el sonido seleccionado antes
-            de guardar.
-          </Text>
-          <ConfiguracionSonidosAlarmas
-            onConfigChange={(config) => {
-              setAlarmasActivas(config.activar_alarmas);
-              setSonidoAlarma(config.sonido);
-              setVibracionAlarma(config.vibracion);
-              setRepetirAlarma(config.repetir_alarma);
-              setIntervaloRepeticion(config.intervalo_repeticion);
-            }}
-          />
           <TouchableOpacity
-            style={styles.testSoundButton}
-            onPress={async () => {
-              let soundUri;
-              switch (sonidoAlarma) {
-                case "gentle":
-                  soundUri = require("../assets/sonidos/gentle.mp3");
-                  break;
-                case "urgent":
-                  soundUri = require("../assets/sonidos/urgent.mp3");
-                  break;
-                case "melody":
-                  soundUri = require("../assets/sonidos/melody.mp3");
-                  break;
-                default:
-                  soundUri = require("../assets/sonidos/default.mp3");
-              }
-              try {
-                const { sound } = await Audio.Sound.createAsync(soundUri);
-                await sound.playAsync();
-              } catch (e) {
-                alert("No se pudo reproducir el sonido.");
-              }
-            }}
-            accessibilityLabel="Escuchar sonido de alarma"
+            style={styles.agregarHorarioButton}
+            onPress={agregarHorario}
+            accessibilityLabel="Agregar nuevo horario"
           >
-            <Text style={styles.testSoundButtonText}>
-              Escuchar sonido seleccionado
-            </Text>
+            <MaterialIcons name="add" size={24} color="#fff" />
+            <Text style={styles.agregarHorarioText}>Agregar horario</Text>
           </TouchableOpacity>
         </View>
       </View>
     );
   };
 
-  // Renderizar paso 5: Confirmación
+  // Renderizar paso 5: Confirmación - Versión Simplificada
   const renderConfirmacion = () => {
     if (currentStep !== 5) return null;
 
-    const diasMap = {
-      lunes: "Lunes",
-      martes: "Martes",
-      miercoles: "Miércoles",
-      jueves: "Jueves",
-      viernes: "Viernes",
-      sabado: "Sábado",
-      domingo: "Domingo",
-    };
-
-    const diasSeleccionados = programacionData.dias_seleccionados || [];
-    const horariosConfigurados = programacionData.horarios || [];
-
     return (
-      <View style={styles.step5Container}>
-        {/* Header del paso 5 */}
-        <View style={styles.step5Header}>
-          <MaterialCommunityIcons
-            name="check-circle"
-            size={24}
-            color="#7A2C34"
-          />
-          <View style={styles.step5HeaderContent}>
-            <Text style={styles.step5Title}>
-              {editandoProgramacion
-                ? "Resumen de cambios"
-                : "Resumen de tu tratamiento"}
+      <View style={{flex: 1, backgroundColor: '#f8f9fa'}}>
+        <ScrollView 
+          style={{flex: 1}}
+          contentContainerStyle={{
+            padding: 16,
+            paddingBottom: 80, // Reducido para que no quede espacio en blanco
+            flexGrow: 0 // Evita que el contenido se expanda más allá del espacio necesario
+          }}
+          showsVerticalScrollIndicator={true}
+        >
+          {/* Tarjeta de Encabezado */}
+          <View style={{
+            backgroundColor: '#7A2C34',
+            borderRadius: 12,
+            padding: 20,
+            alignItems: 'center',
+            marginBottom: 16
+          }}>
+            <View style={{
+              backgroundColor: 'rgba(255, 255, 255, 0.2)',
+              width: 60,
+              height: 60,
+              borderRadius: 30,
+              justifyContent: 'center',
+              alignItems: 'center',
+              marginBottom: 12
+            }}>
+              <MaterialCommunityIcons name="check-circle" size={32} color="#fff" />
+            </View>
+            <Text style={{
+              fontSize: 20,
+              fontWeight: 'bold',
+              color: '#fff',
+              marginBottom: 8,
+              textAlign: 'center'
+            }}>
+              {editandoProgramacion ? 'Resumen de cambios' : 'Resumen del Tratamiento'}
             </Text>
-            <Text style={styles.step5Subtitle}>
-              {editandoProgramacion
-                ? "Revisa los cambios antes de actualizar"
-                : "Revisa todos los detalles antes de confirmar"}
+            <Text style={{
+              fontSize: 15,
+              color: 'rgba(255, 255, 255, 0.9)',
+              textAlign: 'center'
+            }}>
+              {editandoProgramacion 
+                ? 'Revisa los cambios antes de actualizar' 
+                : 'Revisa todos los detalles del tratamiento'}
+            </Text>
+          </View>
+
+          {/* Tarjeta de Información */}
+          <View style={{
+            backgroundColor: '#fff',
+            borderRadius: 12,
+            padding: 16,
+            marginBottom: 16,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 1 },
+            shadowOpacity: 0.1,
+            shadowRadius: 3,
+            elevation: 2
+          }}>
+            {/* Información del medicamento */}
+            {/* Header con información del medicamento */}
+        <View style={styles.stepHeader}>
+          <MaterialCommunityIcons name="pill" size={24} color="#7A2C34" />
+          <View style={styles.stepHeaderContent}>
+            <Text style={styles.stepHeaderTitle}>Medicamento seleccionado</Text>
+            <Text style={styles.stepHeaderSubtitle}>
+              {selectedPastilla?.nombre_comercial}
             </Text>
           </View>
         </View>
 
-        {/* Tarjeta principal de confirmación */}
-        <View style={styles.confirmacionCard}>
-          {/* Información básica */}
-          <View style={styles.confirmacionSection}>
-            <View style={styles.confirmacionItem}>
-              <View style={styles.confirmacionLabelContainer}>
-                <MaterialCommunityIcons name="pill" size={18} color="#7A2C34" />
-                <Text style={styles.confirmacionLabel}>Medicamento:</Text>
+            {/* Días seleccionados */}
+            <View style={{marginBottom: 16}}>
+              <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 8}}>
+                <MaterialCommunityIcons name="calendar" size={20} color="#7A2C34" />
+                <Text style={{marginLeft: 8, fontWeight: '600', color: '#4a5568'}}>Días seleccionados</Text>
               </View>
-              <Text style={styles.confirmacionValue}>
-                {selectedPastilla?.nombre_comercial}
-              </Text>
-            </View>
-
-            {programacionData.nombre_tratamiento && (
-              <View style={styles.confirmacionItem}>
-                <View style={styles.confirmacionLabelContainer}>
-                  <MaterialCommunityIcons
-                    name="tag"
-                    size={18}
-                    color="#7A2C34"
-                  />
-                  <Text style={styles.confirmacionLabel}>
-                    Nombre del tratamiento:
-                  </Text>
-                </View>
-                <Text style={styles.confirmacionValue}>
-                  {programacionData.nombre_tratamiento}
-                </Text>
-              </View>
-            )}
-
-            <View style={styles.confirmacionItem}>
-              <View style={styles.confirmacionLabelContainer}>
-                <MaterialCommunityIcons
-                  name="calendar-week"
-                  size={18}
-                  color="#7A2C34"
-                />
-                <Text style={styles.confirmacionLabel}>Días:</Text>
-              </View>
-              <Text style={styles.confirmacionValue}>
-                {diasSeleccionados.map((dia) => diasMap[dia]).join(", ")}
-              </Text>
-            </View>
-
-            {programacionData.fecha_fin && (
-              <View style={styles.confirmacionItem}>
-                <View style={styles.confirmacionLabelContainer}>
-                  <MaterialCommunityIcons
-                    name="calendar-end"
-                    size={18}
-                    color="#7A2C34"
-                  />
-                  <Text style={styles.confirmacionLabel}>
-                    Fecha de finalización:
-                  </Text>
-                </View>
-                <Text style={styles.confirmacionValue}>
-                  {programacionData.fecha_fin.toLocaleDateString("es-ES", {
-                    day: "2-digit",
-                    month: "2-digit",
-                    year: "numeric",
-                  })}
-                </Text>
-              </View>
-            )}
-          </View>
-
-          {/* Detalle de horarios */}
-          {horariosConfigurados.length > 0 && (
-            <View style={styles.horariosDetalleContainer}>
-              <View style={styles.horariosDetalleHeader}>
-                <MaterialCommunityIcons
-                  name="clock-outline"
-                  size={20}
-                  color="#7A2C34"
-                />
-                <Text style={styles.horariosDetalleTitle}>
-                  Detalle de horarios:
-                </Text>
-              </View>
-              <View style={styles.horariosDetalleList}>
-                {horariosConfigurados.map((horario, index) => (
-                  <View key={index} style={styles.horarioDetalleItem}>
-                    <MaterialCommunityIcons
-                      name="circle-small"
-                      size={24}
-                      color="#7A2C34"
-                    />
-                    <Text style={styles.horarioDetalleText}>
-                      {horario.hora} - {horario.dosis}
+              <View style={{flexDirection: 'row', flexWrap: 'wrap', paddingLeft: 28}}>
+                {['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'].map((dia, index) => (
+                  <View 
+                    key={index}
+                    style={{
+                      backgroundColor: programacionData.dias_seleccionados?.includes(dia.toLowerCase().replace('á', 'a').replace('é', 'e')) 
+                        ? '#7A2C34' 
+                        : '#edf2f7',
+                      paddingHorizontal: 12,
+                      paddingVertical: 6,
+                      borderRadius: 20,
+                      marginRight: 8,
+                      marginBottom: 8
+                    }}
+                  >
+                    <Text style={{
+                      color: programacionData.dias_seleccionados?.includes(dia.toLowerCase().replace('á', 'a').replace('é', 'e')) 
+                        ? '#fff' 
+                        : '#4a5568',
+                      fontSize: 14,
+                      fontWeight: '500'
+                    }}>
+                      {dia.substring(0, 3)}
                     </Text>
                   </View>
                 ))}
               </View>
             </View>
-          )}
 
-          {/* Configuración de Alarmas */}
-          <View style={styles.horariosDetalleContainer}>
-            <View style={styles.horariosDetalleHeader}>
-              <MaterialCommunityIcons name="bell" size={20} color="#7A2C34" />
-              <Text style={styles.horariosDetalleTitle}>
-                Configuración de Alarmas:
-              </Text>
-            </View>
-            <View style={styles.horariosDetalleList}>
-              <View style={styles.horarioDetalleItem}>
-                <MaterialCommunityIcons
-                  name={alarmasActivas ? "bell" : "bell-off"}
-                  size={24}
-                  color={alarmasActivas ? "#7A2C34" : "#999"}
-                />
-                <Text style={styles.horarioDetalleText}>
-                  Alarmas: {alarmasActivas ? "Activadas" : "Desactivadas"}
-                </Text>
-              </View>
-              {alarmasActivas && (
-                <View style={styles.horarioDetalleItem}>
-                  <MaterialCommunityIcons
-                    name="music-note"
-                    size={24}
-                    color="#7A2C34"
-                  />
-                  <Text style={styles.horarioDetalleText}>
-                    Sonido:{" "}
-                    {sonidoAlarma === "default"
-                      ? "Predeterminado"
-                      : sonidoAlarma === "gentle"
-                      ? "Suave"
-                      : sonidoAlarma === "urgent"
-                      ? "Urgente"
-                      : sonidoAlarma === "melody"
-                      ? "Melodía"
-                      : sonidoAlarma}
+            {/* Fecha de fin */}
+            {programacionData.fecha_fin && (
+              <View style={{marginBottom: 16}}>
+                <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 8}}>
+                  <MaterialCommunityIcons name="calendar-end" size={20} color="#7A2C34" />
+                  <Text style={{marginLeft: 8, fontWeight: '600', color: '#4a5568'}}>Fecha de finalización</Text>
+                </View>
+                <View style={{paddingLeft: 28}}>
+                  <Text style={{color: '#4a5568'}}>
+                    {programacionData.fecha_fin.toLocaleDateString('es-ES', {
+                      day: '2-digit',
+                      month: 'long',
+                      year: 'numeric'
+                    })}
                   </Text>
                 </View>
-              )}
+              </View>
+            )}
+
+            {/* Horarios */}
+            <View>
+              <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 8}}>
+                <MaterialCommunityIcons name="clock" size={20} color="#7A2C34" />
+                <Text style={{marginLeft: 8, fontWeight: '600', color: '#4a5568'}}>Horarios programados</Text>
+              </View>
+              <View style={{paddingLeft: 28}}>
+                {programacionData.horarios?.length > 0 ? (
+                  programacionData.horarios.map((horario, index) => (
+                    <View 
+                      key={index} 
+                      style={{
+                        flexDirection: 'row', 
+                        alignItems: 'center', 
+                        marginBottom: 8,
+                        backgroundColor: '#f7fafc',
+                        padding: 12,
+                        borderRadius: 8
+                      }}
+                    >
+                      <MaterialCommunityIcons name="clock-outline" size={18} color="#7A2C34" style={{marginRight: 8}} />
+                      <Text style={{fontSize: 16, color: '#2d3748', fontWeight: '500'}}>{horario.hora}</Text>
+                    </View>
+                  ))
+                ) : (
+                  <Text style={{color: '#a0aec0', fontStyle: 'italic'}}>No hay horarios configurados</Text>
+                )}
+              </View>
             </View>
           </View>
-        </View>
 
-        {/* Información adicional */}
-        <View style={styles.confirmacionInfoContainer}>
-          <MaterialCommunityIcons name="information" size={16} color="#666" />
-          <Text style={styles.confirmacionInfoText}>
-            {editandoProgramacion
-              ? "Al confirmar, se actualizará tu tratamiento con los nuevos datos"
-              : "Al confirmar, se creará tu tratamiento y podrás recibir recordatorios"}
-          </Text>
-        </View>
+          {/* Nota Informativa - Último elemento del ScrollView */}
+          <View style={{
+            flexDirection: 'row',
+            backgroundColor: 'rgba(122, 44, 52, 0.1)',
+            borderRadius: 12,
+            padding: 12,
+            alignItems: 'flex-start',
+            marginBottom: 24, // Aumentado para dar más espacio al final
+            marginTop: 'auto' // Empuja este elemento hacia abajo
+          }}>
+            <MaterialCommunityIcons name="information-outline" size={20} color="#7A2C34" />
+            <Text style={{
+              flex: 1,
+              marginLeft: 10,
+              color: '#4a5568',
+              fontSize: 14,
+              lineHeight: 20
+            }}>
+              {editandoProgramacion 
+                ? 'Al confirmar, se actualizará tu tratamiento con los nuevos datos.' 
+                : 'Al confirmar, se creará tu tratamiento y podrás recibir recordatorios.'}
+            </Text>
+          </View>
+        </ScrollView>
       </View>
     );
   };
@@ -1608,40 +1396,49 @@ const Medicamentos = ({ navigation }) => {
         animationType="slide"
         transparent={true}
         visible={modalDetallesVisible}
-        onRequestClose={() => setModalDetallesVisible(false)}
+        onRequestClose={() => {
+          setModalDetallesVisible(false);
+          setModalTipo(null);
+        }}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalDetallesContent}>
             {/* Header del modal */}
             <View style={styles.modalDetallesHeader}>
-              <Text style={styles.modalDetallesTitle}>
-                {programacionDetalles.nombre_tratamiento ||
-                  programacionDetalles.nombre_comercial ||
-                  "Detalles del Tratamiento"}
-              </Text>
+              <View style={styles.modalDetallesHeaderContent}>
+                <MaterialCommunityIcons name="calendar-clock" size={24} color="#7A2C34" />
+                <Text style={styles.modalDetallesTitle}>
+                  {programacionDetalles.nombre_tratamiento ||
+                    programacionDetalles.nombre_comercial ||
+                    "Detalles del Tratamiento"}
+                </Text>
+              </View>
               <TouchableOpacity
-                style={styles.closeButton}
                 onPress={() => {
                   setModalDetallesVisible(false);
                   setModalTipo(null);
                 }}
+                style={styles.closeButton}
               >
                 <MaterialCommunityIcons name="close" size={24} color="#666" />
               </TouchableOpacity>
             </View>
 
             {/* Contenido del modal */}
-            <ScrollView style={styles.modalDetallesBody}>
+            <ScrollView 
+              style={styles.modalDetallesBody}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.modalDetallesBodyContent}
+            >
               {/* Información básica */}
-              <View style={styles.detalleItem}>
-                <MaterialCommunityIcons name="pill" size={20} color="#7A2C34" />
-                <View style={styles.detalleContent}>
-                  <Text style={styles.detalleLabel}>Medicamento:</Text>
-                  <Text style={styles.detalleValue}>
-                    {programacionDetalles.nombre_comercial || "No especificado"}
-                  </Text>
-                </View>
+              <View style={styles.medicamentoCard}>
+                <MaterialCommunityIcons name="pill" size={32} color="#7A2C34" />
+                <Text style={styles.medicamentoNombre}>
+                  {programacionDetalles.nombre_comercial || "No especificado"}
+                </Text>
               </View>
+              
+              <View style={styles.detallesContainer}>
 
               {/* Estado */}
               <View style={styles.detalleItem}>
@@ -1733,28 +1530,38 @@ const Medicamentos = ({ navigation }) => {
                   </View>
                 )}
               </View>
+              </View>
             </ScrollView>
 
             {/* Footer con botones de acción */}
             <View style={styles.modalDetallesFooter}>
               <TouchableOpacity
-                style={styles.actionButton}
+                style={[styles.seleccionarButton, {marginTop: 10}]}
                 onPress={() => {
                   setModalDetallesVisible(false);
                   setModalTipo(null);
-                  editarProgramacion(programacionDetalles);
+                  // Navegar a editar programación
+                  const programacion = programaciones.find(
+                    (p) => p.id_programacion === programacionDetalles.id_programacion
+                  );
+                  if (programacion) {
+                    editarProgramacion(programacion);
+                  }
                 }}
               >
                 <MaterialCommunityIcons name="pencil" size={20} color="#fff" />
-                <Text style={styles.actionButtonText}>Editar</Text>
+                <Text style={styles.seleccionarButtonText}>
+                  Editar Programación
+                </Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={[
-                  styles.actionButton,
-                  programacionDetalles.estado === "activo"
-                    ? styles.deactivateButton
-                    : styles.activateButton,
+                  styles.seleccionarButton,
+                  programacionDetalles.estado === "activo" 
+                    ? { backgroundColor: '#dc3545' } 
+                    : { backgroundColor: '#28a745' },
+                  { marginTop: 10 }
                 ]}
                 onPress={() => {
                   const nuevoEstado =
@@ -1776,7 +1583,7 @@ const Medicamentos = ({ navigation }) => {
                   size={20}
                   color="#fff"
                 />
-                <Text style={styles.actionButtonText}>
+                <Text style={styles.seleccionarButtonText}>
                   {programacionDetalles.estado === "activo"
                     ? "Desactivar"
                     : "Activar"}
@@ -1784,7 +1591,7 @@ const Medicamentos = ({ navigation }) => {
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={[styles.actionButton, styles.deleteButton]}
+                style={[styles.seleccionarButton, { backgroundColor: '#dc3545', marginTop: 10 }]}
                 onPress={() => {
                   setModalDetallesVisible(false);
                   setModalTipo(null);
@@ -1792,7 +1599,7 @@ const Medicamentos = ({ navigation }) => {
                 }}
               >
                 <MaterialCommunityIcons name="delete" size={20} color="#fff" />
-                <Text style={styles.actionButtonText}>Eliminar</Text>
+                <Text style={styles.seleccionarButtonText}>Eliminar</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -2103,33 +1910,26 @@ const Medicamentos = ({ navigation }) => {
               <Text style={styles.loadingText}>Cargando tratamientos...</Text>
             </View>
           ) : Array.isArray(programaciones) && programaciones.length > 0 ? (
-            (() => {
-              console.log(
-                "🎯 Renderizando programaciones:",
-                programaciones.length,
-                "tratamientos"
-              );
-              return programaciones.map((programacion) => {
-                try {
-                  return renderProgramacion(programacion);
-                } catch (error) {
-                  console.log(
-                    "🔍 Error al renderizar programación individual:",
-                    error
-                  );
-                  return (
-                    <View
-                      key={`error-${Date.now()}`}
-                      style={styles.programacionCard}
-                    >
-                      <Text style={styles.errorText}>
-                        Error al cargar programación
-                      </Text>
-                    </View>
-                  );
-                }
-              });
-            })()
+            programaciones.map((programacion) => {
+              try {
+                return renderProgramacion(programacion);
+              } catch (error) {
+                console.log(
+                  "🔍 Error al renderizar programación individual:",
+                  error
+                );
+                return (
+                  <View
+                    key={`error-${Date.now()}`}
+                    style={styles.programacionCard}
+                  >
+                    <Text style={styles.errorText}>
+                      Error al cargar programación
+                    </Text>
+                  </View>
+                );
+              }
+            })
           ) : (
             <View style={styles.emptyContainer}>
               <MaterialCommunityIcons name="pill" size={48} color="#ccc" />
@@ -2369,20 +2169,15 @@ const Medicamentos = ({ navigation }) => {
                         </Text>
                       </View>
                       {/* Corregido: props sueltos eliminados */}
-                      <View style={styles.medicamentoSeleccionadoContent}>
-                        <Text style={styles.medicamentoSeleccionadoLabel}>
-                          Medicamento seleccionado:
-                        </Text>
-                        <Text style={styles.medicamentoSeleccionadoValue}>
-                          {selectedPastilla?.nombre_comercial}
-                        </Text>
-                        {selectedPastilla?.descripcion && (
-                          <Text
-                            style={styles.medicamentoSeleccionadoDescripcion}
-                          >
-                            {selectedPastilla.descripcion}
+                       {/* Header con información del medicamento */}
+                      <View style={styles.stepHeader}>
+                        <MaterialCommunityIcons name="pill" size={24} color="#7A2C34" />
+                        <View style={styles.stepHeaderContent}>
+                          <Text style={styles.stepHeaderTitle}>Medicamento seleccionado</Text>
+                          <Text style={styles.stepHeaderSubtitle}>
+                            {selectedPastilla?.nombre_comercial}
                           </Text>
-                        )}
+                        </View>
                       </View>
                     </View>
 
@@ -2473,10 +2268,9 @@ const Medicamentos = ({ navigation }) => {
       {showTimePicker && (
         <DateTimePicker
           value={
-            horarioEditando !== null
+            horarioEditando !== null && programacionData.horarios[horarioEditando]
               ? (() => {
-                  const horarioActual =
-                    programacionData.horarios[horarioEditando];
+                  const horarioActual = programacionData.horarios[horarioEditando];
                   if (horarioActual && horarioActual.hora) {
                     const [hours, minutes] = horarioActual.hora.split(":");
                     const date = new Date();
@@ -2489,25 +2283,8 @@ const Medicamentos = ({ navigation }) => {
           }
           mode="time"
           display="default"
-          onChange={(event, selectedDate) => {
-            setShowTimePicker(false);
-            if (selectedDate) {
-              const horaString = selectedDate.toLocaleTimeString("es-ES", {
-                hour: "2-digit",
-                minute: "2-digit",
-                hour12: false,
-              });
-
-              if (horarioEditando !== null) {
-                // Editar horario existente
-                cambiarHora(horarioEditando, horaString);
-              } else {
-                // Nuevo horario - actualizar el horario temporal
-                setHorarioTemporal(horaString);
-              }
-              setHorarioEditando(null);
-            }
-          }}
+          onChange={handleTimeChange}
+          hour12={false}
         />
       )}
 
@@ -2710,10 +2487,10 @@ const styles = StyleSheet.create({
     padding: 5,
   },
   pastillasList: {
-    flex: 1,
+    width: '100%',
   },
   pastillasListContent: {
-    paddingBottom: 20,
+    paddingBottom: 100, // Espacio para los botones de navegación
   },
   pastillaItem: {
     backgroundColor: "#fff",
@@ -2780,25 +2557,6 @@ const styles = StyleSheet.create({
   },
   errorText: {
     marginTop: 15,
-    fontSize: 16,
-    color: "#666",
-    textAlign: "center",
-    marginBottom: 20,
-  },
-  retryButton: {
-    backgroundColor: "#7A2C34",
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 25,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginTop: 15,
-  },
-  retryButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "bold",
   },
   emptyContainer: {
     flex: 1,
@@ -2819,10 +2577,788 @@ const styles = StyleSheet.create({
     textAlign: "center",
     paddingHorizontal: 20,
   },
+  // Estilos para el modal de detalles
+  modalDetallesContent: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    width: '90%',
+    maxHeight: '80%',
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  modalDetallesHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e9ecef',
+    backgroundColor: '#f8f9fa',
+  },
+  modalDetallesHeaderContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  modalDetallesTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#7A2C34',
+    marginLeft: 10,
+  },
+  modalDetallesBody: {
+    maxHeight: '70%',
+  },
+  modalDetallesBodyContent: {
+    padding: 20,
+  },
+  modalDetallesFooter: {
+    padding: 15,
+    borderTopWidth: 1,
+    borderTopColor: '#e9ecef',
+    backgroundColor: '#fff',
+  },
+  medicamentoCard: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 12,
+    padding: 20,
+    alignItems: 'center',
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#e9ecef',
+  },
+  medicamentoNombre: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    marginTop: 10,
+    textAlign: 'center',
+  },
+  detallesContainer: {
+    marginBottom: 20,
+  },
+  detalleItem: {
+    flexDirection: 'row',
+    marginBottom: 15,
+    alignItems: 'flex-start',
+  },
+  detalleContent: {
+    flex: 1,
+    marginLeft: 10,
+  },
+  detalleLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+    marginBottom: 4,
+  },
+  detalleValue: {
+    fontSize: 14,
+    color: '#333',
+    lineHeight: 20,
+  },
+  seleccionarButton: {
+    backgroundColor: '#7A2C34',
+    borderRadius: 25,
+    padding: 15,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  seleccionarButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginLeft: 10,
+  },
+  
+  // Estilos para los botones de navegación
+  navigationButtonsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    padding: 16,
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#f0f0f0',
+  },
+  navButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#4a5568', // Gris oscuro para el botón Atrás
+    marginHorizontal: 4,
+  },
+  navButtonPrimary: {
+    backgroundColor: '#7A2C34', // Color bordo para el botón Continuar
+  },
+  navButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  navButtonTextPrimary: {
+    color: '#fff',
+  },
+
   // Estilos para configuración
   configuracionContainer: {
     flex: 1,
+    padding: 24, // Añadido padding para consistencia con el paso 2
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    margin: 16,
+    shadowColor: 'rgba(0, 0, 0, 0.08)',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 1,
+    shadowRadius: 16,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.04)',
+  },
+  
+  // Estilos para la sección de días seleccionados
+  inputContainer: {
+    marginBottom: 24,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    shadowColor: 'rgba(0, 0, 0, 0.05)',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  inputLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#7A2C34',
+    marginBottom: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  diasSeleccionadosText: {
+    fontSize: 16,
+    color: '#2d3748',
+    lineHeight: 24,
+    backgroundColor: '#f8f9fa',
+    padding: 14,
+    borderRadius: 10,
+    borderLeftWidth: 4,
+    borderLeftColor: '#7A2C34',
+    fontFamily: 'System',
+    fontWeight: '500',
+  },
+  
+  // Estilos para la sección de horarios
+  horariosContainer: {
+    marginBottom: 24,
+  },
+  horariosListContainer: {
+    gap: 16, // Añade espacio entre los elementos hijos
+  },
+  horariosTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  horariosTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#2d3748',
+    marginLeft: 8,
+  },
+  horariosSubtitle: {
+    fontSize: 14,
+    color: '#718096',
+    marginBottom: 16,
+    lineHeight: 20,
+  },
+  
+  // ====================================
+
+// Estilos para configuración
+configuracionContainer: {
+flex: 1,
+padding: 24, // Añadido padding para consistencia con el paso 2
+backgroundColor: '#fff',
+borderRadius: 16,
+margin: 16,
+shadowColor: 'rgba(0, 0, 0, 0.08)',
+shadowOffset: { width: 0, height: 4 },
+shadowOpacity: 1,
+shadowRadius: 16,
+elevation: 3,
+borderWidth: 1,
+borderColor: 'rgba(0, 0, 0, 0.04)',
+},
+
+// Estilos para la sección de días seleccionados
+inputContainer: {
+marginBottom: 24,
+backgroundColor: '#fff',
+borderRadius: 12,
+padding: 18,
+borderWidth: 1,
+borderColor: '#e2e8f0',
+shadowColor: 'rgba(0, 0, 0, 0.05)',
+shadowOffset: { width: 0, height: 2 },
+shadowOpacity: 1,
+shadowRadius: 6,
+elevation: 2,
+},
+inputLabel: {
+fontSize: 15,
+fontWeight: '700',
+color: '#7A2C34',
+marginBottom: 12,
+textTransform: 'uppercase',
+letterSpacing: 0.5,
+},
+diasSeleccionadosText: {
+fontSize: 16,
+color: '#2d3748',
+lineHeight: 24,
+backgroundColor: '#f8f9fa',
+padding: 14,
+borderRadius: 10,
+borderLeftWidth: 4,
+borderLeftColor: '#7A2C34',
+fontFamily: 'System',
+fontWeight: '500',
+},
+
+// Estilos para la sección de horarios
+horariosContainer: {
+marginBottom: 24,
+},
+horariosTitleContainer: {
+flexDirection: 'row',
+alignItems: 'center',
+marginBottom: 12,
+},
+horariosTitle: {
+fontSize: 18,
+fontWeight: '600',
+color: '#2d3748',
+marginLeft: 8,
+},
+horariosSubtitle: {
+fontSize: 14,
+color: '#718096',
+marginBottom: 16,
+lineHeight: 20,
+},
+
+// ====================================
+
+// ESTILOS DE HORARIOS
+// ====================================
+
+// Contenedor del horario (área clickeable)
+horarioItem: {
+flex: 1,
+flexDirection: 'row',
+alignItems: 'center',
+},
+
+// Línea vertical izquierda
+horarioLeftBorder: {
+  position: 'absolute',
+  left: 0,
+  top: 0,
+  bottom: 0,
+  width: 4,
+  backgroundColor: '#7A2C34',
+},
+
+// Contenido del horario
+horarioContent: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  paddingLeft: 20,
+  paddingRight: 12,
+  height: '100%',
+  flex: 1,
+},
+
+// Botón del horario (área clickeable)
+horaButton: {
+flexDirection: 'row',
+alignItems: 'center',
+justifyContent: 'center',
+backgroundColor: 'transparent',
+borderRadius: 8,
+padding: 10,
+},
+
+// Texto de la hora
+horarioHora: {
+  fontSize: 22,
+  fontWeight: '600',
+  color: '#1a202c',
+  marginLeft: 12,
+  fontVariant: ['tabular-nums'],
+  paddingVertical: 4,
+},
+
+// Detalles del horario (dosis)
+horarioDetails: {
+marginTop: 4,
+alignItems: 'center',
+},
+
+// Texto de la dosis
+horarioDosisText: {
+fontSize: 16,
+fontWeight: '500',
+color: '#4a5568',
+},
+
+// Botón de eliminar horario
+deleteButton: {
+  position: 'absolute',
+  right: 0,
+  top: 0,
+  bottom: 0,
+  padding: 8,
+  marginRight: 8,
+  alignItems: 'center',
+  justifyContent: 'center',
+},
+
+// Contenedor cuando no hay horarios
+noHorariosContainer: {
+alignItems: 'center',
+padding: 24,
+backgroundColor: '#f8f9fa',
+borderRadius: 12,
+borderWidth: 1,
+borderColor: '#e2e8f0',
+borderStyle: 'dashed',
+},
+
+// Textos cuando no hay horarios
+noHorariosText: {
+fontSize: 16,
+fontWeight: '500',
+color: '#4a5568',
+marginTop: 12,
+textAlign: 'center',
+},
+noHorariosSubtext: {
+fontSize: 14,
+color: '#a0aec0',
+marginTop: 4,
+textAlign: 'center',
+},
+
+// Botón para agregar nuevo horario
+agregarHorarioButton: {
+flexDirection: 'row',
+alignItems: 'center',
+justifyContent: 'center',
+backgroundColor: '#7A2C34',
+borderRadius: 12,
+padding: 16,
+marginTop: 16,
+shadowColor: 'rgba(122, 44, 52, 0.3)',
+shadowOffset: { width: 0, height: 2 },
+shadowOpacity: 1,
+shadowRadius: 4,
+elevation: 2,
+},
+agregarHorarioText: {
+color: '#fff',
+fontSize: 16,
+fontWeight: '600',
+marginLeft: 8,
+},
+stepHeader: {
+flexDirection: "row",
+alignItems: "center",
+backgroundColor: "#f8f9fa",
+padding: 16,
+borderRadius: 12,
+marginBottom: 24,
+borderLeftWidth: 4,
+borderLeftColor: "#7A2C34",
+},
+stepHeaderContent: {
+marginLeft: 12,
+flex: 1,
+},
+stepHeaderTitle: {
+fontSize: 14,
+fontWeight: "600",
+color: "#495057",
+marginBottom: 4,
+},
+stepHeaderSubtitle: {
+fontSize: 18,
+fontWeight: "bold",
+color: "#7A2C34",
+},
+step2Header: {
+marginBottom: 24,
+paddingBottom: 20,
+borderBottomWidth: 1,
+borderBottomColor: 'rgba(0, 0, 0, 0.04)',
+paddingTop: 4,
+},
+step2HeaderContent: {
+marginBottom: 20,
+marginTop: 8,
+},
+step2Title: {
+fontSize: 22,
+fontWeight: '700',
+color: '#2c3e50',
+marginBottom: 6,
+fontFamily: 'System',
+letterSpacing: -0.1,
+lineHeight: 28,
+},
+diasSection: {
+marginBottom: 20,
+},
+sectionHeader: {
+flexDirection: "row",
+alignItems: "center",
+marginBottom: 8,
+},
+sectionTitle: {
+fontSize: 18,
+fontWeight: "bold",
+color: "#333",
+marginLeft: 8,
+},
+sectionDescription: {
+fontSize: 14,
+color: "#666",
+marginBottom: 20,
+lineHeight: 20,
+},
+diasGrid: {
+flexDirection: "row",
+flexWrap: "wrap",
+justifyContent: "space-between",
+gap: 16, // Aumentado de 12 a 16 para más espacio entre elementos
+marginBottom: 8, // Añadido margen inferior para separación vertical
+},
+diaCard: {
+width: "30%",
+backgroundColor: "#ffffff",
+borderRadius: 12,
+marginBottom: 8, // Añadido margen inferior para separación vertical adicional
+padding: 16,
+alignItems: "center",
+justifyContent: "center",
+borderWidth: 2,
+borderColor: "#e9ecef",
+shadowColor: "#000",
+shadowOffset: {
+width: 0,
+height: 2,
+},
+shadowOpacity: 0.08,
+shadowRadius: 4,
+elevation: 2,
+minHeight: 80,
+},
+diaCardSelected: {
+backgroundColor: "#7A2C34",
+borderColor: "#7A2C34",
+shadowOpacity: 0.15,
+elevation: 4,
+},
+diaCardText: {
+fontSize: 16,
+fontWeight: "bold",
+color: "#7A2C34",
+marginTop: 6,
+marginBottom: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  
+  // Botón del horario (área clickeable)
+  horaButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+    borderRadius: 8,
+    padding: 10,
+  },
+  
+  // Texto de la hora
+  horarioHora: {
+    fontSize: 40,
+    fontWeight: '600',
+    color: '#2d3748',
+    textAlign: 'center',
+  },
+  
+  // Detalles del horario (dosis)
+  horarioDetails: {
+    marginTop: 4,
+    alignItems: 'center',
+  },
+  
+  // Texto de la dosis
+  horarioDosisText: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#4a5568',
+  },
+
+  // Estilos para el paso de confirmación
+  confirmacionContainer: {
+    flex: 1,
+    padding: 0,
+    backgroundColor: '#f8f9fa',
+  },
+  confirmacionContentContainer: {
+    padding: 16,
+    paddingBottom: 80, // Espacio para los botones de navegación
+  },
+  confirmacionHeaderCard: {
+    backgroundColor: '#7A2C34',
+    borderRadius: 12,
     padding: 20,
+    alignItems: 'center',
+    marginBottom: 16,
+    marginTop: 8,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+  },
+  confirmacionHeaderIcon: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  confirmacionTitulo: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#fff',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  confirmacionSubtitulo: {
+    fontSize: 15,
+    color: 'rgba(255, 255, 255, 0.9)',
+    textAlign: 'center',
+  },
+  infoCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    elevation: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+  },
+  infoSection: {
+    marginBottom: 16,
+  },
+  infoContent: {
+    paddingHorizontal: 8,
+  },
+  medicamentoNombre: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1a202c',
+    marginBottom: 8,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  infoIcon: {
+    marginRight: 8,
+  },
+  infoText: {
+    fontSize: 15,
+    color: '#4a5568',
+  },
+  infoHighlight: {
+    fontSize: 15,
+    color: '#2d3748',
+    fontWeight: '500',
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#edf2f7',
+    marginVertical: 16,
+  },
+  diasGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    margin: 8,
+  },
+  diaPill: {
+    width: '14%',
+    aspectRatio: 1,
+    borderRadius: 50,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  diaSeleccionado: {
+    backgroundColor: '#7A2C34',
+  },
+  diaNoSeleccionado: {
+    backgroundColor: '#f0f0f0',
+  },
+  diaText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  diaTextSeleccionado: {
+    color: '#fff',
+  },
+  horariosGrid: {
+    marginTop: 8,
+  },
+  horarioHora: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#2d3748',
+    marginLeft: 12,
+  },
+  horarioDosisBadge: {
+    backgroundColor: '#7A2C34',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  horarioDosisText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
+  notaContainer: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(122, 44, 52, 0.1)',
+    borderRadius: 12,
+    padding: 12,
+    alignItems: 'flex-start',
+    marginTop: 8,
+  },
+  notaTexto: {
+    flex: 1,
+    marginLeft: 10,
+    color: '#4a5568',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  confirmacionBotonesContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 16,
+    marginBottom: 8,
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  cancelarButton: {
+    flex: 1,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  cancelarButtonText: {
+    color: '#4a5568',
+    fontWeight: '600',
+    fontSize: 16,
+  },
+  confirmarButton: {
+    flex: 2,
+    backgroundColor: '#7A2C34',
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    marginLeft: 8,
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
+  confirmarButtonText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 16,
+    textAlign: 'center',
+  },
+  
+  // Contenedor cuando no hay horarios
+  noHorariosContainer: {
+    alignItems: 'center',
+    padding: 24,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderStyle: 'dashed',
+  },
+  
+  // Textos cuando no hay horarios
+  noHorariosText: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#4a5568',
+    marginTop: 12,
+    textAlign: 'center',
+  },
+  noHorariosSubtext: {
+    fontSize: 14,
+    color: '#a0aec0',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  
+  // Botón para agregar nuevo horario
+  agregarHorarioButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#7A2C34',
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 16,
+    shadowColor: 'rgba(122, 44, 52, 0.3)',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  agregarHorarioText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 8,
   },
   stepHeader: {
     flexDirection: "row",
@@ -2849,6 +3385,26 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#7A2C34",
   },
+  step2Header: {
+    marginBottom: 24,
+    paddingBottom: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0, 0, 0, 0.04)',
+    paddingTop: 4,
+  },
+  step2HeaderContent: {
+    marginBottom: 20,
+    marginTop: 8,
+  },
+  step2Title: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#2c3e50',
+    marginBottom: 6,
+    fontFamily: 'System',
+    letterSpacing: -0.1,
+    lineHeight: 28,
+  },
   diasSection: {
     marginBottom: 20,
   },
@@ -2873,12 +3429,14 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "space-between",
-    gap: 12,
+    gap: 16, // Aumentado de 12 a 16 para más espacio entre elementos
+    marginBottom: 3, // Añadido margen inferior para separación vertical
   },
   diaCard: {
     width: "30%",
     backgroundColor: "#ffffff",
     borderRadius: 12,
+    marginBottom: 8, // Añadido margen inferior para separación vertical adicional
     padding: 16,
     alignItems: "center",
     justifyContent: "center",
@@ -2893,6 +3451,7 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
     minHeight: 80,
+    margin: 3,
   },
   diaCardSelected: {
     backgroundColor: "#7A2C34",
@@ -2960,25 +3519,27 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   inputLabel: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#333",
-    marginBottom: 8,
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#2c3e50',
+    marginBottom: 10,
+    fontFamily: 'System',
+    letterSpacing: -0.1,
+    lineHeight: 20,
   },
   textInput: {
-    borderWidth: 1,
-    borderColor: "#ddd",
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
     borderRadius: 12,
-    padding: 15,
+    padding: 14,
     fontSize: 16,
-    backgroundColor: "#fff",
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
+    backgroundColor: '#fff',
+    color: '#2c3e50',
+    fontFamily: 'System',
+    shadowColor: 'rgba(0,0,0,0.03)',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 4,
     elevation: 1,
   },
   textArea: {
@@ -2991,21 +3552,18 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   dateInput: {
-    borderWidth: 1,
-    borderColor: "#ddd",
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
     borderRadius: 12,
-    padding: 15,
-    backgroundColor: "#fff",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
+    padding: 14,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    shadowColor: 'rgba(0,0,0,0.03)',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 4,
     elevation: 1,
   },
   dateButton: {
@@ -3024,11 +3582,13 @@ const styles = StyleSheet.create({
   },
   dateInputText: {
     fontSize: 16,
-    color: "#333",
-    flex: 1,
+    color: '#2c3e50',
+    fontFamily: 'System',
   },
   placeholderText: {
-    color: "#999",
+    color: '#94a3b8',
+    fontFamily: 'System',
+    fontSize: 15,
   },
   detallesContainer: {
     marginTop: 20,
@@ -3049,17 +3609,24 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   infoContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#f0f0f0",
-    padding: 12,
-    borderRadius: 8,
-    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#f8fafc',
+    padding: 16,
+    borderRadius: 12,
+    marginTop: 24,
+    borderLeftWidth: 4,
+    borderLeftColor: '#7A2C34',
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
   },
   infoText: {
-    marginLeft: 8,
-    fontSize: 13,
-    color: "#666",
+    marginLeft: 12,
+    fontSize: 14,
+    color: '#475569',
+    lineHeight: 20,
+    flex: 1,
+    fontFamily: 'System',
   },
   diasContainer: {
     marginBottom: 20,
@@ -3167,6 +3734,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 2,
     elevation: 2,
+    borderLeftWidth: 3,
+    borderLeftColor: "#7A2C34",
   },
   horarioInfo: {
     flex: 1,
@@ -3176,9 +3745,6 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#333",
     marginRight: 5,
-  },
-  deleteButton: {
-    backgroundColor: "#ff6b6b",
   },
   activateButton: {
     backgroundColor: "#4CAF50",
@@ -3190,12 +3756,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#666",
     fontWeight: "500",
-  },
-  deleteButtonText: {
-    fontSize: 13,
-    color: "#fff",
-    fontWeight: "600",
-    textAlign: "center",
   },
   noHorariosText: {
     fontSize: 14,
@@ -3323,35 +3883,280 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#666",
   },
-  confirmacionCard: {
-    backgroundColor: "#fff",
-    borderRadius: 16,
+  step2Container: {
+    flex: 1,
     padding: 24,
-    marginBottom: 20,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.15,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    margin: 16,
+    shadowColor: 'rgba(0, 0, 0, 0.08)',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 1,
+    shadowRadius: 16,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.04)',
+  },
+  horariosDetalleContainer: {
+    marginTop: 20,
+    padding: 0,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#f0f0f0',
+    overflow: 'hidden',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  horariosDetalleHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 15,
+    backgroundColor: '#faf5f5',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0e6e6',
+  },
+  horarioIcon: {
+    marginRight: 10,
+  },
+  horariosDetalleTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#7A2C34',
+  },
+  horariosGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    padding: 10,
+  },
+  horarioItem: {
+    width: '50%',
+    padding: 10,
+  },
+  horarioItemContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff9f9',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#f0e0e0',
+  },
+  horarioHora: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#333',
+    marginLeft: 8,
+  },
+  dosisBadge: {
+    position: 'absolute',
+    top: -5,
+    right: 5,
+    backgroundColor: '#7A2C34',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  dosisText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  confirmacionContainer: {
+    flex: 1,
+    backgroundColor: '#f8f9fa',
+  },
+  confirmacionContentContainer: {
+    paddingBottom: 30,
+  },
+  confirmacionHeaderCard: {
+    backgroundColor: '#7A2C34',
+    padding: 25,
+    paddingTop: 40,
+    borderBottomLeftRadius: 25,
+    borderBottomRightRadius: 25,
+    marginBottom: -15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
     shadowRadius: 8,
     elevation: 5,
-    borderWidth: 1,
-    borderColor: "#f0f0f0",
   },
-  confirmacionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
+  confirmacionHeaderIcon: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+    alignSelf: 'center',
     marginBottom: 15,
   },
-  confirmacionTitle: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#333",
+  confirmacionTitulo: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#fff',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  confirmacionSubtitulo: {
+    fontSize: 15,
+    color: 'rgba(255, 255, 255, 0.85)',
+    textAlign: 'center',
+    lineHeight: 22,
+    paddingHorizontal: 10,
+  },
+  infoCard: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 20,
+    margin: 20,
+    marginTop: 30,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 5,
+  },
+  infoSection: {
+    marginBottom: 20,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
     marginLeft: 10,
   },
-  confirmacionSection: {
-    marginBottom: 20,
+  infoContent: {
+    paddingLeft: 10,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  infoIcon: {
+    marginRight: 8,
+  },
+  infoText: {
+    fontSize: 15,
+    color: '#555',
+  },
+  infoHighlight: {
+    fontSize: 16,
+    color: '#7A2C34',
+    fontWeight: '600',
+    backgroundColor: '#FFE5E5',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    alignSelf: 'flex-start',
+  },
+  medicamentoNombre: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 5,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#f0f0f0',
+    marginVertical: 15,
+  },
+  diasGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginLeft: 5,
+  },
+  diaPill: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    justifyContent: 'center',
+    alignItems: 'center',
+    margin: 5,
+    backgroundColor: '#f8f9fa',
+    borderWidth: 1,
+    borderColor: '#e9ecef',
+  },
+  diaSeleccionado: {
+    backgroundColor: '#7A2C34',
+    borderColor: '#7A2C34',
+  },
+  diaNoSeleccionado: {
+    backgroundColor: '#f8f9fa',
+  },
+  diaText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+  },
+  diaTextSeleccionado: {
+    color: '#fff',
+  },
+  horariosGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginTop: 5,
+  },
+  horarioCard: {
+    width: '90%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+    padding: 15,
+    borderRadius: 15,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#eee',
+  },
+  horarioHora: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    marginLeft: 10,
+    flex: 1,
+  },
+  horarioDosisBadge: {
+    backgroundColor: '#7A2C34',
+    borderRadius: 12,
+    width: 32,
+    height: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 'auto',
+  },
+  horarioDosisText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  notaContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#F8F1F1',
+    padding: 18,
+    borderRadius: 15,
+    marginHorizontal: 20,
+    marginTop: 10,
+    borderLeftWidth: 4,
+    borderLeftColor: '#7A2C34',
+  },
+  notaTexto: {
+    flex: 1,
+    marginLeft: 12,
+    fontSize: 14,
+    color: '#5E5E5E',
+    lineHeight: 20,
   },
   confirmacionItem: {
     flexDirection: "row",
@@ -3429,614 +4234,6 @@ const styles = StyleSheet.create({
   menuOptionTextDelete: {
     color: "#ff6b6b",
   },
-  navigationButtons: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 15,
-  },
-  navButton: {
-    flex: 1,
-    paddingVertical: 18,
-    paddingHorizontal: 24,
-    borderRadius: 10,
-    backgroundColor: "#ffffff",
-    borderWidth: 2,
-    borderColor: "#dee2e6",
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 2,
-    minHeight: 56,
-  },
-  navButtonPrimary: {
-    backgroundColor: "#7A2C34",
-    borderColor: "#7A2C34",
-    shadowOpacity: 0.15,
-    elevation: 4,
-  },
-  navButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#495057",
-    textAlign: "center",
-    lineHeight: 20,
-  },
-  navButtonTextPrimary: {
-    color: "#ffffff",
-    fontWeight: "700",
-  },
-  agregarHorarioButton: {
-    backgroundColor: "#7A2C34",
-    paddingVertical: 12,
-    paddingHorizontal: 25,
-    borderRadius: 25,
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
-    marginTop: 10,
-  },
-  agregarHorarioText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "bold",
-    marginLeft: 10,
-  },
-  seleccionarButton: {
-    backgroundColor: "#7A2C34",
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    elevation: 4,
-    gap: 8,
-  },
-  seleccionarButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  modalBody: {
-    flex: 1,
-    paddingBottom: 20,
-  },
-  modalBodyContent: {
-    paddingBottom: 20,
-  },
-  step1Container: {
-    flex: 1,
-    paddingBottom: 20,
-  },
-  step2Container: {
-    flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 20,
-  },
-  step2Header: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#f8f9fa",
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 24,
-    borderLeftWidth: 4,
-    borderLeftColor: "#7A2C34",
-  },
-  step2HeaderContent: {
-    marginLeft: 12,
-    flex: 1,
-  },
-  step2Title: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#7A2C34",
-    marginBottom: 4,
-  },
-  step2Subtitle: {
-    fontSize: 14,
-    color: "#666",
-    lineHeight: 18,
-  },
-  medicamentoSeleccionadoCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fff",
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 24,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-    borderLeftWidth: 3,
-    borderLeftColor: "#7A2C34",
-  },
-  medicamentoSeleccionadoContent: {
-    marginLeft: 12,
-    flex: 1,
-  },
-  medicamentoSeleccionadoLabel: {
-    fontSize: 13,
-    color: "#666",
-    marginBottom: 4,
-    fontWeight: "500",
-  },
-  medicamentoSeleccionadoValue: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: "#333",
-    marginBottom: 4,
-  },
-  medicamentoSeleccionadoDescripcion: {
-    fontSize: 13,
-    color: "#666",
-    lineHeight: 18,
-    fontStyle: "italic",
-  },
-  step5Container: {
-    flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 20,
-  },
-  step5Header: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#f8f9fa",
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 24,
-    borderLeftWidth: 4,
-    borderLeftColor: "#7A2C34",
-  },
-  step5HeaderContent: {
-    marginLeft: 12,
-    flex: 1,
-  },
-  step5Title: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#7A2C34",
-    marginBottom: 4,
-  },
-  step5Subtitle: {
-    fontSize: 14,
-    color: "#666",
-    lineHeight: 18,
-  },
-  editandoInfoContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fff3cd",
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 16,
-    borderLeftWidth: 4,
-    borderLeftColor: "#ffc107",
-  },
-  editandoInfoText: {
-    fontSize: 14,
-    color: "#856404",
-    marginLeft: 8,
-    fontWeight: "500",
-  },
-  medicamentoBloqueadoContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#f8f9fa",
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: "#e9ecef",
-  },
-  medicamentoBloqueadoContent: {
-    marginLeft: 12,
-    flex: 1,
-  },
-  medicamentoBloqueadoTitle: {
-    fontSize: 14,
-    color: "#666",
-    marginBottom: 4,
-    fontWeight: "500",
-  },
-  medicamentoBloqueadoValue: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: "#333",
-    marginBottom: 4,
-  },
-  medicamentoBloqueadoInfo: {
-    fontSize: 12,
-    color: "#999",
-    fontStyle: "italic",
-  },
-  pastillaItemDisabled: {
-    opacity: 0.5,
-  },
-  pastillasList: {
-    flex: 1,
-  },
-  pastillasListContent: {
-    paddingBottom: 20,
-  },
-  navigationButtonsContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: 20,
-    paddingTop: 15,
-    borderTopWidth: 1,
-    borderTopColor: "#e9ecef",
-    backgroundColor: "#f8f9fa",
-    gap: 15,
-    minHeight: 90,
-  },
-  // Estilos para el modal de detalles de pastilla
-  modalDetallesContent: {
-    backgroundColor: "#fff",
-    borderRadius: 20,
-    width: "92%",
-    height: "90%",
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
-    overflow: "hidden",
-  },
-  modalDetallesHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "#eee",
-    backgroundColor: "#f8f9fa",
-  },
-  modalDetallesHeaderContent: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    flex: 1,
-    marginRight: 12,
-  },
-  modalDetallesTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#333",
-    flex: 1,
-  },
-  closeButton: {
-    padding: 5,
-  },
-  modalDetallesBody: {
-    flex: 1,
-    padding: 20,
-  },
-  modalDetallesBodyContent: {
-    paddingBottom: 20,
-  },
-  medicamentoCard: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 20,
-    marginBottom: 20,
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-    borderLeftWidth: 4,
-    borderLeftColor: "#7A2C34",
-  },
-  medicamentoNombre: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#333",
-    marginTop: 10,
-    textAlign: "center",
-  },
-  detallesContainer: {
-    gap: 12,
-  },
-  modalDetallesFooter: {
-    flexDirection: "row",
-    justifyContent: "center",
-    padding: 20,
-    paddingTop: 20,
-    borderTopWidth: 1,
-    borderTopColor: "#eee",
-    gap: 8,
-  },
-  detalleItem: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    paddingVertical: 15,
-    paddingHorizontal: 16,
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    marginBottom: 12,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
-    borderLeftWidth: 3,
-    borderLeftColor: "#7A2C34",
-  },
-  detalleContent: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  detalleLabel: {
-    fontSize: 13,
-    color: "#666",
-    marginBottom: 6,
-    fontWeight: "500",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  detalleValue: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: "#333",
-    lineHeight: 20,
-  },
-  horariosDetalleContainer: {
-    marginTop: 24,
-    padding: 20,
-    backgroundColor: "#f8f9fa",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#e9ecef",
-  },
-  horariosDetalleHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 16,
-    gap: 10,
-  },
-  horariosDetalleTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#7A2C34",
-  },
-  horariosDetalleList: {
-    gap: 8,
-  },
-  horarioDetalleItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    backgroundColor: "#fff",
-    borderRadius: 8,
-    marginBottom: 4,
-  },
-  horarioDetalleText: {
-    fontSize: 14,
-    color: "#555",
-    marginLeft: 8,
-    fontWeight: "500",
-  },
-  confirmacionInfoContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#e3f2fd",
-    padding: 16,
-    borderRadius: 12,
-    borderLeftWidth: 4,
-    borderLeftColor: "#2196f3",
-  },
-  confirmacionInfoText: {
-    fontSize: 14,
-    color: "#1976d2",
-    marginLeft: 12,
-    lineHeight: 18,
-    flex: 1,
-  },
-  tablaContainer: {
-    backgroundColor: "#f8f9fa",
-    borderRadius: 8,
-    padding: 12,
-    marginTop: 10,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: "#e9ecef",
-  },
-  tablaHeader: {
-    flexDirection: "row",
-    backgroundColor: "#7A2C34",
-    borderRadius: 6,
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-    marginBottom: 8,
-  },
-  tablaHeaderCell: {
-    flex: 1,
-    alignItems: "center",
-  },
-  tablaHeaderText: {
-    color: "#ffffff",
-    fontWeight: "bold",
-    fontSize: 14,
-  },
-  tablaRow: {
-    flexDirection: "row",
-    backgroundColor: "#ffffff",
-    borderRadius: 4,
-    marginBottom: 4,
-    paddingVertical: 8,
-    paddingHorizontal: 8,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-    borderLeftWidth: 3,
-    borderLeftColor: "#7A2C34",
-  },
-  tablaCell: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  tablaCellText: {
-    color: "#495057",
-    fontSize: 13,
-    fontWeight: "500",
-  },
-  noHorariosContainer: {
-    alignItems: "center",
-    paddingVertical: 30,
-    backgroundColor: "#f8f9fa",
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#e9ecef",
-  },
-  horariosSubtitle: {
-    fontSize: 14,
-    color: "#666",
-    textAlign: "center",
-    marginBottom: 15,
-    fontStyle: "italic",
-  },
-  horarioDetails: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  horarioInfoText: {
-    fontSize: 12,
-    color: "#999",
-    marginTop: 2,
-  },
-  noHorariosSubtext: {
-    fontSize: 14,
-    color: "#999",
-    marginTop: 8,
-    textAlign: "center",
-  },
-  horariosTitleContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 16,
-    gap: 10,
-  },
-  horariosTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#7A2C34",
-  },
-  // Estilos para alarmas
-  alarmasContainer: {
-    marginTop: 24,
-    padding: 20,
-    backgroundColor: "#f8f9fa",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#e9ecef",
-  },
-  alarmasTitleContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 16,
-    gap: 10,
-  },
-  alarmasTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#7A2C34",
-  },
-  alarmaSwitchContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#e9ecef",
-  },
-  alarmaSwitchInfo: {
-    flex: 1,
-  },
-  alarmaSwitchLabel: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#333",
-    marginBottom: 4,
-  },
-  alarmaSwitchDescription: {
-    fontSize: 14,
-    color: "#666",
-    lineHeight: 18,
-  },
-  sonidoContainer: {
-    marginTop: 16,
-  },
-  sonidoLabel: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#333",
-    marginBottom: 12,
-  },
-  sonidoOptions: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  sonidoOption: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "#ddd",
-    backgroundColor: "#fff",
-  },
-  sonidoOptionSelected: {
-    backgroundColor: "#7A2C34",
-    borderColor: "#7A2C34",
-  },
-  sonidoOptionText: {
-    fontSize: 14,
-    color: "#666",
-    fontWeight: "500",
-  },
-  sonidoOptionTextSelected: {
-    color: "#fff",
-  },
   programacionesContainer: {
     padding: 20,
     borderRadius: 10,
@@ -4098,9 +4295,6 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 14,
     fontWeight: "bold",
-  },
-  deleteButton: {
-    backgroundColor: "#ff6b6b",
   },
 });
 

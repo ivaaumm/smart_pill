@@ -12,7 +12,7 @@ import {
 import { apiRequest, API_CONFIG } from "../credenciales";
 import { useUser } from "../UserContextProvider";
 import { Ionicons } from "@expo/vector-icons";
-import { testServerConnection } from "../test-connection";
+import { testServerConnection } from "../test-api.js";
 
 export default function Login(props) {
   const [usuario, setUsuario] = React.useState("");

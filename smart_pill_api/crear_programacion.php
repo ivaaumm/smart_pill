@@ -81,6 +81,12 @@ try {
         $programacion_id = $conn->insert_id;
         $horarios_creados = 0;
         
+        // Verificar que el remedio_global_id existe
+        $check_remedio = $conn->query("SELECT 1 FROM remedio_global WHERE remedio_global_id = $remedio_global_id");
+        if (!$check_remedio || $check_remedio->num_rows === 0) {
+            throw new Exception("El remedio con ID $remedio_global_id no existe en la base de datos");
+        }
+        
         // Procesar horarios si se proporcionan
         if (isset($data->horarios) && is_array($data->horarios) && count($data->horarios) > 0) {
             $dias_validos = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo'];
@@ -124,6 +130,11 @@ try {
                 
                 if ($row_check['existe'] == 0) {
                     // Insertar el horario
+                    // Verificar que todos los IDs sean válidos antes de insertar
+                    if ($programacion_id <= 0 || $usuario_id <= 0 || $remedio_global_id <= 0) {
+                        throw new Exception("Error: IDs inválidos. Programación: $programacion_id, Usuario: $usuario_id, Remedio: $remedio_global_id");
+                    }
+                    
                     $sql_horario = "INSERT INTO horarios_tratamiento (
                         tratamiento_id, usuario_id, remedio_global_id, dia_semana, hora, dosis, activo
                     ) VALUES (
