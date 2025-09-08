@@ -1,11 +1,11 @@
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { MaterialIcons } from "@expo/vector-icons";
 
 export default function Bluetooth() {
   return (
     <View style={styles.container}>
-      <Ionicons
+      <MaterialIcons
         name="bluetooth"
         size={80}
         color="#7A2C34"

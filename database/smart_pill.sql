@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: 127.0.0.1
--- Tiempo de generación: 28-07-2025 a las 19:43:24
+-- Tiempo de generación: 02-09-2025 a las 13:54:49
 -- Versión del servidor: 10.4.32-MariaDB
 -- Versión de PHP: 8.2.12
 
@@ -54,6 +54,41 @@ CREATE TABLE `alarma_remedio` (
 -- --------------------------------------------------------
 
 --
+-- Estructura de tabla para la tabla `horarios_tratamiento`
+--
+
+CREATE TABLE `horarios_tratamiento` (
+  `horario_id` int(11) NOT NULL,
+  `tratamiento_id` int(11) NOT NULL,
+  `usuario_id` int(11) NOT NULL,
+  `remedio_global_id` int(11) NOT NULL,
+  `dia_semana` enum('lunes','martes','miercoles','jueves','viernes','sabado','domingo') NOT NULL,
+  `hora` time NOT NULL,
+  `dosis` varchar(50) DEFAULT NULL,
+  `activo` tinyint(1) DEFAULT 1,
+  `fecha_creacion` timestamp NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Volcado de datos para la tabla `horarios_tratamiento`
+--
+
+INSERT INTO `horarios_tratamiento` (`horario_id`, `tratamiento_id`, `usuario_id`, `remedio_global_id`, `dia_semana`, `hora`, `dosis`, `activo`, `fecha_creacion`) VALUES
+(8, 10, 1, 65, 'viernes', '00:19:00', '1', 1, '2025-09-02 03:49:05'),
+(9, 10, 1, 65, 'sabado', '00:19:00', '1', 1, '2025-09-02 03:49:05'),
+(10, 10, 1, 65, 'jueves', '00:19:00', '1', 1, '2025-09-02 03:49:05'),
+(11, 10, 1, 65, 'martes', '00:19:00', '1', 1, '2025-09-02 03:49:05'),
+(12, 10, 1, 65, 'viernes', '00:39:00', '1', 1, '2025-09-02 03:49:05'),
+(13, 10, 1, 65, 'sabado', '00:39:00', '1', 1, '2025-09-02 03:49:05'),
+(14, 10, 1, 65, 'jueves', '00:39:00', '1', 1, '2025-09-02 03:49:05'),
+(15, 10, 1, 65, 'martes', '00:39:00', '1', 1, '2025-09-02 03:49:05'),
+(16, 11, 1, 17, 'viernes', '00:51:00', '1', 1, '2025-09-02 03:51:12'),
+(17, 12, 1, 17, 'martes', '00:51:00', '1', 1, '2025-09-02 03:51:59'),
+(18, 13, 1, 17, 'martes', '00:54:00', '1', 1, '2025-09-02 03:54:14');
+
+-- --------------------------------------------------------
+
+--
 -- Estructura de tabla para la tabla `movimientos_pastillas`
 --
 
@@ -66,6 +101,63 @@ CREATE TABLE `movimientos_pastillas` (
   `peso_medido` decimal(10,2) DEFAULT NULL,
   `tipo_movimiento` varchar(50) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_spanish2_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Estructura de tabla para la tabla `programacion_horarios`
+--
+
+CREATE TABLE `programacion_horarios` (
+  `horario_id` int(11) NOT NULL,
+  `programacion_id` int(11) NOT NULL,
+  `hora` time NOT NULL,
+  `dias_semana` varchar(100) DEFAULT NULL,
+  `activo` tinyint(1) DEFAULT 1
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_spanish2_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Estructura de tabla para la tabla `programacion_tratamientos`
+--
+
+CREATE TABLE `programacion_tratamientos` (
+  `programacion_id` int(11) NOT NULL,
+  `usuario_id` int(11) NOT NULL,
+  `remedio_global_id` int(11) NOT NULL,
+  `nombre_tratamiento` varchar(100) DEFAULT NULL,
+  `fecha_inicio` date NOT NULL,
+  `fecha_fin` date DEFAULT NULL,
+  `dosis_por_toma` varchar(50) DEFAULT NULL,
+  `observaciones` text DEFAULT NULL,
+  `estado` enum('activo','pausado','completado','cancelado') DEFAULT 'activo',
+  `fecha_creacion` timestamp NOT NULL DEFAULT current_timestamp(),
+  `fecha_actualizacion` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_spanish2_ci;
+
+--
+-- Volcado de datos para la tabla `programacion_tratamientos`
+--
+
+INSERT INTO `programacion_tratamientos` (`programacion_id`, `usuario_id`, `remedio_global_id`, `nombre_tratamiento`, `fecha_inicio`, `fecha_fin`, `dosis_por_toma`, `observaciones`, `estado`, `fecha_creacion`, `fecha_actualizacion`) VALUES
+(10, 1, 65, 'Albendazol', '2025-09-02', '2025-10-02', '1 tableta', NULL, 'activo', '2025-09-02 03:49:05', '2025-09-02 03:49:05'),
+(11, 1, 17, 'Aciclovir', '2025-09-02', '2025-10-02', '1 tableta', NULL, 'activo', '2025-09-02 03:51:12', '2025-09-02 03:51:12'),
+(12, 1, 17, 'Aciclovir', '2025-09-02', '2025-10-02', '1 tableta', NULL, 'activo', '2025-09-02 03:51:59', '2025-09-02 03:51:59'),
+(13, 1, 17, 'Aciclovir', '2025-09-02', '2025-10-02', '1 tableta', NULL, 'activo', '2025-09-02 03:54:14', '2025-09-02 03:55:42');
+
+-- --------------------------------------------------------
+
+--
+-- Estructura de tabla para la tabla `remedios_globales`
+--
+
+CREATE TABLE `remedios_globales` (
+  `remedio_global_id` int(11) NOT NULL,
+  `nombre_comercial` varchar(100) NOT NULL,
+  `descripcion` text DEFAULT NULL,
+  `fecha_creacion` timestamp NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
 
@@ -265,6 +357,13 @@ CREATE TABLE `usuarios` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_spanish2_ci;
 
 --
+-- Volcado de datos para la tabla `usuarios`
+--
+
+INSERT INTO `usuarios` (`usuario_id`, `nombre_usuario`, `contrasena_hash`, `email`, `fecha_creacion`, `fecha_nacimiento`, `avatar`) VALUES
+(1, 'nahir', '$2y$10$VVoGninh/bXKfnKZc6KDpuDO1noY069yWF5hYIH2ngAvIHPE/Pcui', 'nahirailin1234@gmail.com', '2025-08-31 22:21:58', '2006-08-28', NULL);
+
+--
 -- Índices para tablas volcadas
 --
 
@@ -283,12 +382,42 @@ ALTER TABLE `alarma_remedio`
   ADD KEY `remedio_usuario_id` (`remedio_usuario_id`);
 
 --
+-- Indices de la tabla `horarios_tratamiento`
+--
+ALTER TABLE `horarios_tratamiento`
+  ADD PRIMARY KEY (`horario_id`),
+  ADD KEY `tratamiento_id` (`tratamiento_id`),
+  ADD KEY `usuario_id` (`usuario_id`),
+  ADD KEY `horarios_tratamiento_ibfk_3` (`remedio_global_id`);
+
+--
 -- Indices de la tabla `movimientos_pastillas`
 --
 ALTER TABLE `movimientos_pastillas`
   ADD PRIMARY KEY (`movimiento_id`),
   ADD KEY `remedio_usuario_id` (`remedio_usuario_id`),
   ADD KEY `usuario_id` (`usuario_id`);
+
+--
+-- Indices de la tabla `programacion_horarios`
+--
+ALTER TABLE `programacion_horarios`
+  ADD PRIMARY KEY (`horario_id`),
+  ADD KEY `programacion_id` (`programacion_id`);
+
+--
+-- Indices de la tabla `programacion_tratamientos`
+--
+ALTER TABLE `programacion_tratamientos`
+  ADD PRIMARY KEY (`programacion_id`),
+  ADD KEY `usuario_id` (`usuario_id`),
+  ADD KEY `remedio_global_id` (`remedio_global_id`);
+
+--
+-- Indices de la tabla `remedios_globales`
+--
+ALTER TABLE `remedios_globales`
+  ADD PRIMARY KEY (`remedio_global_id`);
 
 --
 -- Indices de la tabla `remedio_global`
@@ -328,10 +457,34 @@ ALTER TABLE `alarmas`
   MODIFY `alarma_id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT de la tabla `horarios_tratamiento`
+--
+ALTER TABLE `horarios_tratamiento`
+  MODIFY `horario_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=19;
+
+--
 -- AUTO_INCREMENT de la tabla `movimientos_pastillas`
 --
 ALTER TABLE `movimientos_pastillas`
   MODIFY `movimiento_id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT de la tabla `programacion_horarios`
+--
+ALTER TABLE `programacion_horarios`
+  MODIFY `horario_id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT de la tabla `programacion_tratamientos`
+--
+ALTER TABLE `programacion_tratamientos`
+  MODIFY `programacion_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=14;
+
+--
+-- AUTO_INCREMENT de la tabla `remedios_globales`
+--
+ALTER TABLE `remedios_globales`
+  MODIFY `remedio_global_id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT de la tabla `remedio_global`
@@ -355,7 +508,7 @@ ALTER TABLE `tratamientos`
 -- AUTO_INCREMENT de la tabla `usuarios`
 --
 ALTER TABLE `usuarios`
-  MODIFY `usuario_id` int(11) NOT NULL AUTO_INCREMENT;
+  MODIFY `usuario_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 
 --
 -- Restricciones para tablas volcadas
@@ -375,11 +528,32 @@ ALTER TABLE `alarma_remedio`
   ADD CONSTRAINT `alarma_remedio_ibfk_2` FOREIGN KEY (`remedio_usuario_id`) REFERENCES `remedio_usuario` (`remedio_usuario_id`);
 
 --
+-- Filtros para la tabla `horarios_tratamiento`
+--
+ALTER TABLE `horarios_tratamiento`
+  ADD CONSTRAINT `horarios_tratamiento_ibfk_1` FOREIGN KEY (`tratamiento_id`) REFERENCES `programacion_tratamientos` (`programacion_id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `horarios_tratamiento_ibfk_2` FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`usuario_id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `horarios_tratamiento_ibfk_3` FOREIGN KEY (`remedio_global_id`) REFERENCES `remedio_global` (`remedio_global_id`) ON DELETE CASCADE;
+
+--
 -- Filtros para la tabla `movimientos_pastillas`
 --
 ALTER TABLE `movimientos_pastillas`
   ADD CONSTRAINT `movimientos_pastillas_ibfk_1` FOREIGN KEY (`remedio_usuario_id`) REFERENCES `remedio_usuario` (`remedio_usuario_id`),
   ADD CONSTRAINT `movimientos_pastillas_ibfk_2` FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`usuario_id`);
+
+--
+-- Filtros para la tabla `programacion_horarios`
+--
+ALTER TABLE `programacion_horarios`
+  ADD CONSTRAINT `programacion_horarios_ibfk_1` FOREIGN KEY (`programacion_id`) REFERENCES `programacion_tratamientos` (`programacion_id`) ON DELETE CASCADE;
+
+--
+-- Filtros para la tabla `programacion_tratamientos`
+--
+ALTER TABLE `programacion_tratamientos`
+  ADD CONSTRAINT `programacion_tratamientos_ibfk_1` FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`usuario_id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `programacion_tratamientos_ibfk_2` FOREIGN KEY (`remedio_global_id`) REFERENCES `remedio_global` (`remedio_global_id`) ON DELETE CASCADE;
 
 --
 -- Filtros para la tabla `remedio_usuario`

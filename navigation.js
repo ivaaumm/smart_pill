@@ -5,11 +5,7 @@ import {
   DrawerContentScrollView,
   DrawerItemList,
 } from "@react-navigation/drawer";
-import {
-  MaterialCommunityIcons,
-  FontAwesome5,
-  Ionicons,
-} from "@expo/vector-icons";
+import { MaterialIcons } from "@expo/vector-icons";
 import { TouchableOpacity } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -18,6 +14,7 @@ import Medicamentos from "./screens/medicamentos";
 import RegisterTab from "./screens/RegisterTab";
 import Perfil from "./screens/Perfil";
 import Bluetooth from "./screens/Bluetooth";
+import SoundTest from "./screens/SoundTest";
 
 const Tab = createBottomTabNavigator();
 const Drawer = createDrawerNavigator();
@@ -32,22 +29,14 @@ function Tabs({ navigation }) {
         tabBarIcon: ({ color }) => {
           const iconSize = 28;
           if (route.name === "Tratamientos") {
-            return <FontAwesome5 name="pills" size={iconSize} color={color} />;
+            return <MaterialIcons name="medication" size={iconSize} color={color} />;
           } else if (route.name === "Home") {
             return (
-              <MaterialCommunityIcons
-                name="heart-pulse"
-                size={iconSize}
-                color={color}
-              />
+              <MaterialIcons name="home" size={iconSize} color={color} />
             );
           } else if (route.name === "Registro") {
             return (
-              <MaterialCommunityIcons
-                name="clipboard-pulse-outline"
-                size={iconSize}
-                color={color}
-              />
+              <MaterialIcons name="assignment" size={iconSize} color={color} />
             );
           }
         },
@@ -143,11 +132,7 @@ export default function Navigation() {
         options={{
           title: "Inicio",
           drawerIcon: ({ color, size }) => (
-            <MaterialCommunityIcons
-              name="heart-pulse"
-              size={size}
-              color={color}
-            />
+            <MaterialIcons name="favorite" size={size} color={color} />
           ),
         }}
       />
@@ -157,7 +142,7 @@ export default function Navigation() {
         options={{
           title: "Perfil",
           drawerIcon: ({ color, size }) => (
-            <Ionicons name="person-circle-outline" size={size} color={color} />
+            <MaterialIcons name="person-outline" size={size} color={color} />
           ),
         }}
       />
@@ -167,7 +152,7 @@ export default function Navigation() {
         options={{
           title: "Bluetooth",
           drawerIcon: ({ color, size }) => (
-            <Ionicons name="bluetooth" size={size} color={color} />
+            <MaterialIcons name="bluetooth" size={size} color={color} />
           ),
         }}
       />

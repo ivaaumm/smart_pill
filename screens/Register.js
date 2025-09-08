@@ -12,7 +12,7 @@ import {
 import { apiRequest, API_CONFIG } from "../credenciales";
 import { useUser } from "../UserContextProvider";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import { Ionicons } from "@expo/vector-icons";
+import { MaterialIcons } from "@expo/vector-icons";
 
 export default function Register({ navigation }) {
   const [nombre, setNombre] = useState("");
@@ -126,8 +126,8 @@ export default function Register({ navigation }) {
               secureTextEntry={!showPassword}
             />
             <TouchableOpacity onPress={() => setShowPassword((v) => !v)}>
-              <Ionicons
-                name={showPassword ? "eye-off" : "eye"}
+              <MaterialIcons
+                name={showPassword ? "visibility-off" : "visibility"}
                 size={22}
                 color="#7A2C34"
                 style={{ marginRight: 12 }}
@@ -145,8 +145,8 @@ export default function Register({ navigation }) {
               secureTextEntry={!showConfirmPassword}
             />
             <TouchableOpacity onPress={() => setShowConfirmPassword((v) => !v)}>
-              <Ionicons
-                name={showConfirmPassword ? "eye-off" : "eye"}
+              <MaterialIcons
+                name={showConfirmPassword ? "visibility-off" : "visibility"}
                 size={22}
                 color="#7A2C34"
                 style={{ marginRight: 12 }}
@@ -172,8 +172,8 @@ export default function Register({ navigation }) {
             pointerEvents="none"
           />
           <TouchableOpacity onPress={() => setShowDatePicker(true)}>
-            <Ionicons
-              name="calendar"
+            <MaterialIcons
+              name="event"
               size={22}
               color="#7A2C34"
               style={{ marginRight: 15, marginLeft: 8 }}

@@ -9,7 +9,7 @@ import {
   RefreshControl,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { MaterialIcons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { apiRequest } from "../credenciales";
 import { useUser } from "../UserContextProvider";
@@ -230,7 +230,7 @@ export default function Home() {
     return (
       <View key={toma.id} style={styles.tomaCard}>
         <View style={styles.tomaHeader}>
-          <MaterialCommunityIcons name="clock" size={20} color="#7A2C34" />
+          <MaterialIcons name="access-time" size={20} color="#7A2C34" />
           <Text style={styles.tomaHora}>{toma.hora}</Text>
         </View>
         <View style={styles.tomaContent}>
@@ -262,8 +262,8 @@ export default function Home() {
         {/* Tomas de hoy */}
         <View style={styles.tomasSeccion}>
           <View style={styles.tomasHeader}>
-            <MaterialCommunityIcons
-              name="calendar-today"
+            <MaterialIcons
+              name="event"
               size={20}
               color="#7A2C34"
             />
@@ -275,7 +275,7 @@ export default function Home() {
             </View>
           ) : (
             <View style={styles.tomasVacio}>
-              <MaterialCommunityIcons
+              <MaterialIcons
                 name="check-circle"
                 size={24}
                 color="#ccc"
@@ -290,8 +290,8 @@ export default function Home() {
         {/* Tomas de mañana */}
         <View style={styles.tomasSeccion}>
           <View style={styles.tomasHeader}>
-            <MaterialCommunityIcons
-              name="calendar-arrow-right"
+            <MaterialIcons
+              name="event-available"
               size={20}
               color="#7A2C34"
             />
@@ -303,8 +303,8 @@ export default function Home() {
             </View>
           ) : (
             <View style={styles.tomasVacio}>
-              <MaterialCommunityIcons
-                name="calendar-blank"
+              <MaterialIcons
+                name="event-available"
                 size={24}
                 color="#ccc"
               />
@@ -321,7 +321,7 @@ export default function Home() {
   const renderProgramacion = (programacion) => (
     <View key={programacion.programacion_id} style={styles.programacionCard}>
       <View style={styles.programacionHeader}>
-        <MaterialCommunityIcons name="pill" size={24} color="#7A2C34" />
+        <MaterialIcons name="medication" size={24} color="#7A2C34" />
         <View style={styles.programacionInfo}>
           <Text style={styles.programacionNombre}>
             {programacion.nombre_tratamiento || programacion.nombre_comercial}
@@ -334,8 +334,8 @@ export default function Home() {
 
       <View style={styles.programacionDetalles}>
         <View style={styles.detalleItem}>
-          <MaterialCommunityIcons
-            name="calendar-range"
+          <MaterialIcons
+            name="event"
             size={16}
             color="#666"
           />
@@ -355,8 +355,8 @@ export default function Home() {
                 console.log("🔍 Horario.dias:", horario?.dias);
                 return (
                   <View key={index} style={styles.horarioItem}>
-                    <MaterialCommunityIcons
-                      name="clock-outline"
+                    <MaterialIcons
+                      name="access-time"
                       size={14}
                       color="#666"
                     />
@@ -372,7 +372,7 @@ export default function Home() {
 
         {programacion.observaciones && (
           <View style={styles.detalleItem}>
-            <MaterialCommunityIcons name="note-text" size={16} color="#666" />
+            <MaterialIcons name="notes" size={16} color="#666" />
             <Text style={styles.detalleText}>{programacion.observaciones}</Text>
           </View>
         )}
@@ -402,8 +402,8 @@ export default function Home() {
           </View>
         ) : error ? (
           <View style={styles.errorContainer}>
-            <MaterialCommunityIcons
-              name="alert-circle"
+            <MaterialIcons
+              name="warning"
               size={48}
               color="#ff6b6b"
             />
@@ -417,7 +417,7 @@ export default function Home() {
           </View>
         ) : programaciones.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <MaterialCommunityIcons name="pill-off" size={64} color="#ccc" />
+            <MaterialIcons name="medication" size={64} color="#ccc" />
             <Text style={styles.emptyTitle}>
               No hay tratamientos programados
             </Text>

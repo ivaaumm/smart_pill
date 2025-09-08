@@ -11,7 +11,7 @@ import {
 } from "react-native";
 import { apiRequest, API_CONFIG } from "../credenciales";
 import { useUser } from "../UserContextProvider";
-import { Ionicons } from "@expo/vector-icons";
+import { MaterialIcons } from "@expo/vector-icons";
 import { testServerConnection } from "../test-api.js";
 
 export default function Login(props) {
@@ -27,26 +27,39 @@ export default function Login(props) {
     }
 
     try {
+      console.log("🔑 Intentando iniciar sesión con:", { usuario });
+      
       const response = await apiRequest(API_CONFIG.ENDPOINTS.LOGIN, {
         method: "POST",
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           usuario: usuario,
           password: password,
         }),
       });
 
-      if (response.success && response.data && response.data.success) {
+      console.log("🔑 Respuesta del servidor:", response);
+
+      if (response.success && response.data) {
+        // La respuesta exitosa ahora está en response.data directamente
+        const userData = response.data;
+        
         setUser({
-          usuario_id: response.data.usuario_id,
-          nombre: response.data.nombre_usuario,
-          correo: response.data.correo,
-          edad: response.data.edad,
-          avatar: response.data.avatar,
+          usuario_id: userData.usuario_id,
+          nombre: userData.nombre_usuario || userData.nombre,
+          correo: userData.correo || userData.email,
+          edad: userData.edad,
+          avatar: userData.avatar,
         });
+        
         Alert.alert(
           "Inicio de sesión exitoso",
-          `Bienvenido ${response.data.nombre_usuario} a Smart Pill`
+          `Bienvenido ${userData.nombre_usuario || userData.nombre} a Smart Pill`
         );
+        
         props.navigation.navigate("Home");
       } else {
         // Manejar diferentes tipos de errores
@@ -105,8 +118,8 @@ export default function Login(props) {
               value={password}
             />
             <TouchableOpacity onPress={() => setShowPassword((v) => !v)}>
-              <Ionicons
-                name={showPassword ? "eye-off" : "eye"}
+              <MaterialIcons
+                name={showPassword ? "visibility-off" : "visibility"}
                 size={22}
                 color="#7A2C34"
                 style={{ marginRight: 12 }}

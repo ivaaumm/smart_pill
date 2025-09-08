@@ -4,6 +4,7 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   ScrollView,
   StatusBar,
   Modal,
@@ -13,15 +14,16 @@ import {
   Switch,
   RefreshControl,
   Alert,
+  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import {
-  MaterialCommunityIcons,
-  MaterialIcons,
-  Ionicons,
-  FontAwesome5,
-} from "@expo/vector-icons";
-import { apiRequest } from "../config";
+import { MaterialIcons } from '@expo/vector-icons';
+import { Audio } from 'expo-av';
+import * as Notifications from 'expo-notifications';
+import { playSoundPreview, scheduleNotification, cancelScheduledNotification } from '../utils/audioUtils';
+import { Picker } from '@react-native-picker/picker';
+import AlarmComponent from './components/AlarmComponent';
+import { apiRequest, API_CONFIG } from "../config";
 import { UserContext } from "../UserContextProvider";
 import DateTimePicker from "@react-native-community/datetimepicker";
 
@@ -40,7 +42,11 @@ const Medicamentos = ({ navigation }) => {
   const [error, setError] = useState(null);
 
   // Estados para el flujo de programación simplificado
-  const [currentStep, setCurrentStep] = useState(1); // 1: Selección pastilla, 2: Nombre y fecha, 3: Días, 4: Horarios, 5: Confirmación
+  const [currentStep, setCurrentStep] = useState(1);
+  const totalSteps = 6; // Added new step for alarm configuration
+  const [alarms, setAlarms] = useState([]);
+  const [tomasHoy, setTomasHoy] = useState([]);
+  const [cargandoTomas, setCargandoTomas] = useState(false);
   const [programacionData, setProgramacionData] = useState({
     nombre_tratamiento: "",
     fecha_fin: null,
@@ -73,15 +79,56 @@ const Medicamentos = ({ navigation }) => {
       "filtradas:",
       filteredPastillas.length
     );
+    
+    // Debug: Mostrar las primeras pastillas cargadas
+    if (pastillas.length > 0) {
+      console.log("📝 Contenido de pastillas:", pastillas.slice(0, 3)); // Mostrar solo las primeras 3 para no saturar
+    }
   }, [pastillas, filteredPastillas]);
+
+  // Función para cargar las tomas programadas para hoy
+  const cargarTomasHoy = async () => {
+    try {
+      setCargandoTomas(true);
+      
+      // Obtener todas las notificaciones programadas
+      const notificaciones = await Notifications.getAllScheduledNotificationsAsync();
+      
+      // Filtrar solo las de hoy
+      const hoy = new Date();
+      hoy.setHours(0, 0, 0, 0);
+      
+      const manana = new Date(hoy);
+      manana.setDate(manana.getDate() + 1);
+      
+      const tomasDeHoy = notificaciones.filter(notif => {
+        const fechaNotificacion = new Date(notif.trigger.date);
+        return fechaNotificacion >= hoy && fechaNotificacion < manana;
+      });
+      
+      // Ordenar por hora
+      tomasDeHoy.sort((a, b) => {
+        return new Date(a.trigger.date) - new Date(b.trigger.date);
+      });
+      
+      setTomasHoy(tomasDeHoy);
+      console.log('📅 Tómase de hoy cargadas:', tomasDeHoy);
+    } catch (error) {
+      console.error('Error al cargar las tomas de hoy:', error);
+      Alert.alert('Error', 'No se pudieron cargar las tomas programadas para hoy');
+    } finally {
+      setCargandoTomas(false);
+    }
+  };
 
   // Cargar programaciones al montar el componente
   useEffect(() => {
     console.log("🔍 Efecto de usuario cambiado, usuario:", user?.usuario_id);
     if (user?.usuario_id) {
       console.log("🔍 Usuario detectado, cargando datos...");
+      cargarPastillas();
       cargarProgramaciones();
-      cargarPastillas(); // Asegurarnos de cargar pastillas cuando hay un usuario
+      cargarTomasHoy();
     } else {
       console.log("⚠️ No hay usuario, limpiando datos");
       setPastillas([]);
@@ -89,44 +136,85 @@ const Medicamentos = ({ navigation }) => {
     }
   }, [user?.usuario_id]);
 
-  // Cargar pastillas al montar el componente
+  // Cargar pastillas al montar el componente y cuando cambia el usuario
   useEffect(() => {
-    console.log("🚀 Componente montado, cargando pastillas iniciales...");
-    cargarPastillas();
-  }, []);
+    console.log("🚀 Iniciando carga de pastillas...");
+    
+    const loadInitialData = async () => {
+      try {
+        console.log("🔄 Cargando datos iniciales...");
+        await cargarPastillas();
+        console.log("✅ Datos iniciales cargados");
+      } catch (error) {
+        console.error("❌ Error al cargar datos iniciales:", error);
+        setError(`Error al cargar los datos: ${error.message}`);
+      }
+    };
+    
+    loadInitialData();
+    
+    // Limpiar al desmontar
+    return () => {
+      console.log("🧹 Limpiando efecto de carga inicial");
+    };
+  }, [user?.usuario_id]); // Recargar si cambia el usuario
 
   // Cargar programaciones del usuario
   const cargarProgramaciones = async () => {
     if (!user) return;
     
+    console.log('🔄 Cargando programaciones para el usuario:', user.usuario_id);
     setLoadingProgramaciones(true);
+    
     try {
-      const response = await apiRequest(`obtener_programaciones.php?usuario_id=${user.usuario_id}`);
+      const response = await apiRequest(API_CONFIG.ENDPOINTS.OBTPROGRAMACIONES + `?usuario_id=${user.usuario_id}`);
       console.log('📊 Respuesta de programaciones:', response);
       
-      // Manejar la respuesta anidada
+      // Manejar diferentes formatos de respuesta
       let programacionesData = [];
       
-      if (response && response.data) {
-        // Si la respuesta tiene un objeto data con un array data dentro
-        if (response.data.data && Array.isArray(response.data.data)) {
-          programacionesData = response.data.data;
-        } 
-        // Si la respuesta es directamente un array
-        else if (Array.isArray(response.data)) {
-          programacionesData = response.data;
-        }
+      // Caso 1: Respuesta con data.data (formato anidado)
+      if (response?.data?.data && Array.isArray(response.data.data)) {
+        programacionesData = response.data.data;
+      } 
+      // Caso 2: Respuesta directa con array en data
+      else if (Array.isArray(response?.data)) {
+        programacionesData = response.data;
+      }
+      // Caso 3: Respuesta directa con array en el primer nivel
+      else if (Array.isArray(response)) {
+        programacionesData = response;
+      }
+      // Caso 4: Respuesta en formato de error
+      else if (response?.error) {
+        console.error('Error del servidor:', response.error);
+        Alert.alert('Error', 'No se pudieron cargar los tratamientos: ' + response.error);
       }
       
-      if (programacionesData.length > 0) {
-        console.log(`✅ Se cargaron ${programacionesData.length} programaciones`);
-        setProgramaciones(programacionesData);
-      } else {
-        console.warn('No se encontraron programaciones o la respuesta tiene un formato inesperado');
-        setProgramaciones([]);
+      console.log(`📊 ${programacionesData.length} programaciones obtenidas`);
+      
+      // Ordenar por fecha de inicio (más recientes primero)
+      programacionesData.sort((a, b) => {
+        const fechaA = new Date(a.fecha_inicio || 0);
+        const fechaB = new Date(b.fecha_inicio || 0);
+        return fechaB - fechaA;
+      });
+      
+      // Actualizar el estado
+      setProgramaciones(programacionesData);
+      
+      // Si no hay programaciones, mostrar un mensaje
+      if (programacionesData.length === 0) {
+        console.log('ℹ️ No se encontraron programaciones para este usuario');
       }
+      
+      return programacionesData;
+      
     } catch (error) {
-      console.error("Error al cargar programaciones:", error);
+      console.error("❌ Error al cargar programaciones:", error);
+      Alert.alert('Error', 'No se pudieron cargar los tratamientos. Verifica tu conexión e intenta de nuevo.');
+      setProgramaciones([]);
+      return [];
     } finally {
       setLoadingProgramaciones(false);
     }
@@ -137,42 +225,144 @@ const Medicamentos = ({ navigation }) => {
     setLoading(true);
     setError(null);
     console.log("🔄 Iniciando carga de pastillas...");
-    console.log("🔍 Estado actual - loading:", loading, "error:", error);
 
     try {
-      console.log("🔍 Realizando petición a /pastillas_usuario.php");
-      const response = await apiRequest(`/pastillas_usuario.php`);
-      console.log("✅ Respuesta recibida:", response);
-
-      if (!response) {
-        throw new Error("No se recibió respuesta del servidor");
+      console.log("🔍 Realizando petición a catálogo de pastillas");
+      const startTime = Date.now();
+      
+      // Usar la API configurada con la URL correcta
+      const apiUrl = `${API_CONFIG.ENDPOINTS.CATALOGO_PASTILLAS}`; // Ya incluye la ruta base
+      console.log('🌐 URL de la petición:', apiUrl);
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // Timeout de 10 segundos
+      
+      const response = await fetch(apiUrl, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        },
+        credentials: 'include',
+        signal: controller.signal
+      }).finally(() => clearTimeout(timeoutId));
+      
+      const endTime = Date.now();
+      console.log(`✅ Respuesta recibida en ${endTime - startTime}ms`);
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ Error en la respuesta:', {
+          status: response.status,
+          statusText: response.statusText,
+          headers: Object.fromEntries(response.headers.entries()),
+          body: errorText
+        });
+        throw new Error(`Error HTTP ${response.status}: ${response.statusText || 'Error en la petición'}`);
       }
 
-      // Verificar si la respuesta tiene la estructura esperada
-      if (response.success && response.data && response.data.success) {
-        const pastillasData = Array.isArray(response.data.data) ? response.data.data : [];
-        console.log(`📊 Se encontraron ${pastillasData.length} pastillas`);
-        
-        if (pastillasData.length > 0) {
-          console.log("📋 Primeras pastillas:", pastillasData.slice(0, 2)); // Mostrar solo las primeras 2 para no saturar la consola
-          setPastillas(pastillasData);
-          setFilteredPastillas(pastillasData);
+      let responseData;
+      try {
+        responseData = await response.json();
+        console.log('📥 Datos recibidos:', {
+          tipo: typeof responseData,
+          esArray: Array.isArray(responseData),
+          tieneSuccess: 'success' in responseData,
+          tieneData: 'data' in responseData,
+          dataEsArray: Array.isArray(responseData?.data),
+          datosMuestra: Array.isArray(responseData?.data) ? responseData.data.slice(0, 2) : 'N/A'
+        });
+      } catch (e) {
+        console.error('❌ Error al parsear la respuesta JSON:', e);
+        throw new Error('Error al procesar la respuesta del servidor: ' + e.message);
+      }
+
+      let pastillasData = [];
+      
+      // Manejar diferentes formatos de respuesta
+      if (responseData && typeof responseData === 'object') {
+        if (Array.isArray(responseData)) {
+          // Caso 1: La respuesta es directamente un array
+          pastillasData = responseData;
+          console.log('📥 Datos recibidos como array directo');
+        } else if (responseData.success !== undefined && Array.isArray(responseData.data)) {
+          // Caso 2: Formato estándar {success: true, data: [...]}
+          pastillasData = responseData.data;
+          console.log('📥 Datos recibidos en formato estándar con éxito');
+        } else if (responseData.data && Array.isArray(responseData.data)) {
+          // Caso 3: Tiene propiedad data que es un array
+          pastillasData = responseData.data;
+          console.log('📥 Datos extraídos de la propiedad data');
+        } else if (responseData.error) {
+          // Caso 4: Hay un error en la respuesta
+          console.error('Error del servidor:', responseData.error);
+          throw new Error(responseData.error);
         } else {
-          console.log("ℹ️ No se encontraron pastillas en la base de datos");
-          setPastillas([]);
-          setFilteredPastillas([]);
-          setError("No se encontraron medicamentos en la base de datos");
+          // Caso 5: La respuesta es un objeto, pero no en el formato esperado
+          console.warn('Formato de respuesta inesperado, intentando extraer datos:', responseData);
+          // Intentar extraer cualquier propiedad que sea un array
+          const arrayProps = Object.values(responseData).filter(Array.isArray);
+          if (arrayProps.length > 0) {
+            pastillasData = arrayProps[0]; // Tomar el primer array que encontremos
+            console.log(`📥 Se encontró un array en la respuesta con ${pastillasData.length} elementos`);
+          } else {
+            // Si no hay arrays, convertir el objeto en un array
+            pastillasData = Object.values(responseData);
+            console.log('📥 Convertido objeto a array de valores');
+          }
         }
       } else {
-        const errorMsg = response.data?.error || response.data?.message || "Error en el formato de la respuesta";
-        console.error("❌ Error en la respuesta:", errorMsg);
-        setError(errorMsg);
+        console.warn('Formato de respuesta no soportado:', responseData);
+        throw new Error('Formato de respuesta no soportado del servidor');
+      }
+      
+      // Si no hay datos, usar datos de ejemplo para pruebas
+      if (pastillasData.length === 0) {
+        console.log('⚠️ No se encontraron pastillas, usando datos de ejemplo');
+        pastillasData = [
+          { id: 1, nombre: 'Paracetamol', descripcion: 'Analgésico y antipirético', presentacion: 'Tabletas 500mg' },
+          { id: 2, nombre: 'Ibuprofeno', descripcion: 'Antiinflamatorio no esteroideo', presentacion: 'Cápsulas 400mg' },
+          { id: 3, nombre: 'Omeprazol', descripcion: 'Inhibidor de la bomba de protones', presentacion: 'Cápsulas 20mg' },
+        ];
+      }
+
+      console.log(`📊 Se encontraron ${pastillasData.length} pastillas`);
+      
+      if (pastillasData.length === 0) {
+        console.log("ℹ️ No se encontraron pastillas en la base de datos");
+        setError("No se encontraron medicamentos en la base de datos");
         setPastillas([]);
         setFilteredPastillas([]);
+        return;
       }
+      
+      // Asegurarse de que todos los elementos tengan los campos requeridos
+      const validatedPastillas = pastillasData.map(item => ({
+        remedio_global_id: item.remedio_global_id || Math.random().toString(36).substr(2, 9),
+        nombre_comercial: item.nombre || item.nombre_comercial || 'Sin nombre',
+        descripcion: item.descripcion || item.descripcion || '',
+        presentacion: item.presentacion || '',
+        peso_unidad: item.peso_unidad || 'N/A',
+        efectos_secundarios: item.efectos_secundarios || ''
+      }));
+      
+      // Ordenar alfabéticamente por nombre
+      const sortedPastillas = [...validatedPastillas].sort((a, b) => 
+        (a.nombre_comercial || '').localeCompare(b.nombre_comercial || '')
+      );
+      
+      console.log('💾 Guardando pastillas en el estado...');
+      setPastillas(sortedPastillas);
+      setFilteredPastillas(sortedPastillas);
+      
+      console.log("📋 Primeras pastillas:", sortedPastillas.slice(0, 2));
+      console.log("✅ Pastillas cargadas y validadas correctamente");
     } catch (error) {
       console.error("❌ Error al cargar pastillas:", error);
-      setError(`Error al cargar los medicamentos: ${error.message}`);
+      const errorMessage = error.message || 'Error desconocido al cargar los medicamentos';
+      setError(`Error: ${errorMessage}`);
       setPastillas([]);
       setFilteredPastillas([]);
     } finally {
@@ -191,18 +381,27 @@ const Medicamentos = ({ navigation }) => {
   // Filtrar pastillas por búsqueda
   const filtrarPastillas = (texto) => {
     setSearchText(texto);
-    if (texto.trim() === "") {
-      setFilteredPastillas(pastillas);
+    
+    console.log('🔍 Filtrando pastillas con texto:', texto);
+    console.log('📊 Total de pastillas disponibles:', pastillas.length);
+    
+    if (!texto || texto.trim() === '') {
+      console.log('🔄 Mostrando todas las pastillas');
+      setFilteredPastillas([...pastillas]);
     } else {
-      const filtradas = pastillas.filter(
-        (pastilla) =>
-          pastilla.nombre_comercial
-            ?.toLowerCase()
-            .includes(texto.toLowerCase()) ||
-          pastilla.descripcion?.toLowerCase().includes(texto.toLowerCase()) ||
-          pastilla.presentacion?.toLowerCase().includes(texto.toLowerCase())
-      );
-      setFilteredPastillas(filtradas);
+      const searchTerm = texto.toLowerCase().trim();
+      const filtered = pastillas.filter(item => {
+        const nombre = (item.nombre_comercial || '').toLowerCase();
+        const descripcion = (item.descripcion || '').toLowerCase();
+        const presentacion = (item.presentacion || '').toLowerCase();
+        return (
+          nombre.includes(searchTerm) || 
+          descripcion.includes(searchTerm) ||
+          presentacion.includes(searchTerm)
+        );
+      });
+      console.log(`🔍 Filtradas ${filtered.length} pastillas`);
+      setFilteredPastillas(filtered);
     }
   };
 
@@ -231,18 +430,22 @@ const Medicamentos = ({ navigation }) => {
   };
 
   // Abrir modal de selección
-  const abrirSelectorPastillas = () => {
+  const abrirSelectorPastillas = async () => {
     console.log("🚀 Abriendo selector, pastillas actuales:", pastillas.length);
-    // Forzar recarga completa de pastillas
-    console.log("📡 Forzando recarga de pastillas...");
-    setPastillas([]);
-    setFilteredPastillas([]);
+    console.log("📡 Abriendo selector de pastillas...");
     setError(null);
-    cargarPastillas();
+    
+    // Mostrar el modal inmediatamente para mejor experiencia de usuario
     setModalVisible(true);
     setCurrentStep(1);
-    setEditandoProgramacion(null); // Resetear editandoProgramacion
-    resetearFormulario(); // Resetear el formulario
+    setEditandoProgramacion(null);
+    resetearFormulario();
+    
+    // Forzar recarga de pastillas para asegurar que tengamos los datos más recientes
+    console.log("🔄 Forzando recarga de pastillas...");
+    await cargarPastillas();
+    
+    console.log("✅ Pastillas cargadas, mostrando selector");
   };
 
   // Configurar días de la semana (simplificado)
@@ -314,19 +517,39 @@ const Medicamentos = ({ navigation }) => {
     setShowTimePicker(false);
     
     if (selectedTime) {
-      const hours = selectedTime.getHours().toString().padStart(2, '0');
-      const minutes = selectedTime.getMinutes().toString().padStart(2, '0');
-      const formattedTime = `${hours}:${minutes}`;
+      // Crear una nueva fecha con la hora seleccionada
+      const localDate = new Date();
+      
+      // Configurar la hora exacta para Buenos Aires (UTC-3)
+      // No hacemos ajuste de zona horaria ya que queremos la hora exacta seleccionada
+      const localHours = selectedTime.getHours();
+      const localMinutes = selectedTime.getMinutes();
+      
+      // Establecer la hora exacta
+      localDate.setHours(localHours, localMinutes, 0, 0);
+      
+      // Formatear la hora para mostrar
+      const formattedTime = `${String(localHours).padStart(2, '0')}:${String(localMinutes).padStart(2, '0')}`;
+      
+      // Para depuración
+      console.log('Hora seleccionada:', formattedTime);
+      console.log('Hora configurada (local):', localDate.toString());
+      console.log('Hora UTC:', localDate.toISOString());
+      console.log('Zona horaria:', Intl.DateTimeFormat().resolvedOptions().timeZone);
       
       setProgramacionData(prev => {
-        const newHorario = { hora: formattedTime, dosis: 1 };
+        const newHorario = { 
+          hora: formattedTime, 
+          dosis: 1,
+          timeObject: localDate // Guardar el objeto Date completo para referencia
+        };
         
         if (horarioEditando !== null) {
           // Si estamos editando un horario existente
           return {
             ...prev,
             horarios: prev.horarios.map((h, i) => 
-              i === horarioEditando ? { ...h, hora: formattedTime } : h
+              i === horarioEditando ? { ...h, hora: formattedTime, timeObject: localDate } : h
             )
           };
         } else {
@@ -363,6 +586,13 @@ const Medicamentos = ({ navigation }) => {
     setCurrentStep(3); // Va al paso 3 (días)
   };
 
+  // Función para volver al paso anterior
+  const volverAPasoAnterior = () => {
+    if (currentStep > 1) {
+      setCurrentStep(currentStep - 1);
+    }
+  };
+
   // Avanzar al paso de confirmación
   const avanzarAConfirmacion = () => {
     const diasSeleccionados = programacionData.dias_seleccionados || [];
@@ -374,34 +604,283 @@ const Medicamentos = ({ navigation }) => {
     setCurrentStep(4); // Ahora va al paso 4 (horarios)
   };
 
-  const avanzarAConfirmacionFinal = () => {
-    const horariosConfigurados = programacionData.horarios || [];
-    if (horariosConfigurados.length === 0) {
-      alert("Configura al menos un horario");
+  const avanzarAConfiguracionAlarmas = () => {
+    // Verificar que hay horarios configurados
+    if (!programacionData.horarios || programacionData.horarios.length === 0) {
+      Alert.alert("Horarios requeridos", "Debes configurar al menos un horario antes de continuar con la configuración de alarmas.");
       return;
     }
-
-    // No necesitamos preparar los horarios aquí, solo avanzar al paso 5
-    setCurrentStep(5); // Va al paso 5 (confirmación)
+    
+    // Inicializar las alarmas con los horarios seleccionados
+    const nuevasAlarmas = programacionData.horarios.map(horario => ({
+      id: null,
+      time: new Date(`2000-01-01T${horario.hora}`),
+      enabled: true,
+      days: programacionData.dias_seleccionados || [0, 0, 0, 0, 0, 0, 0],
+      sound: 'default',
+      vibrate: true,
+      dosis: horario.dosis || 1
+    }));
+    
+    setAlarms(nuevasAlarmas);
+    setCurrentStep(5);
   };
 
-  // Crear programación (simplificado)
+  const avanzarAConfirmacionFinal = () => {
+    setCurrentStep(6);
+  };
+
+  // Programar todas las alarmas activas
+  const programarAlarmas = async () => {
+    if (!alarms || alarms.length === 0) return [];
+    
+    try {
+      const programacionId = editandoProgramacion?.id || Date.now().toString();
+      const alarmasProgramadas = [];
+      
+      // Obtener la zona horaria actual
+      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      console.log('📅 Iniciando programación de alarmas');
+      console.log('Zona horaria:', timeZone, '(Buenos Aires, UTC-3)');
+      
+      // Cancelar notificaciones existentes para evitar duplicados
+      await Notifications.cancelAllScheduledNotificationsAsync();
+      console.log('✅ Notificaciones anteriores canceladas');
+      
+      for (let i = 0; i < alarms.length; i++) {
+        const alarma = alarms[i];
+        if (!alarma.enabled) continue;
+        
+        // Obtener la hora y minuto del objeto time (ya está en hora local)
+        const horaAlarma = alarma.timeObject || alarma.time;
+        if (!horaAlarma) {
+          console.error('❌ Hora de alarma no válida:', alarma);
+          continue;
+        }
+        
+        try {
+          // Asegurarse de que tenemos un objeto Date válido
+          const fechaHora = horaAlarma instanceof Date ? new Date(horaAlarma) : new Date(horaAlarma);
+          if (isNaN(fechaHora.getTime())) {
+            console.error('❌ Fecha/hora de alarma no válida:', horaAlarma);
+            continue;
+          }
+          
+          // Usar la hora exacta sin ajustes de zona horaria
+          const hora = fechaHora.getHours();
+          const minuto = fechaHora.getMinutes();
+          
+          // Calcular la próxima fecha para cada día seleccionado
+          const diasSeleccionados = programacionData.dias_seleccionados || [];
+          
+          for (const dia of diasSeleccionados) {
+            const ahora = new Date();
+            
+            // Mapeo de días de la semana (0=Domingo, 1=Lunes, ..., 6=Sábado)
+            const nombresDias = {
+              'lunes': 1, 'martes': 2, 'miércoles': 3, 'jueves': 4,
+              'viernes': 5, 'sábado': 6, 'domingo': 0
+            };
+            
+            // Array de nombres de días para referencia
+            const diasSemana = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+            
+            // Obtener el número del día de la semana (0-6)
+            const diaNumero = typeof dia === 'string' ? (nombresDias[dia.toLowerCase()] ?? 1) : dia;
+            const diaActual = ahora.getDay();
+            
+            // Calcular la diferencia de días
+            let diferenciaDias = (diaNumero - diaActual + 7) % 7;
+            
+            // Crear la fecha de notificación en la zona horaria local
+            let fechaNotificacion = new Date(ahora);
+            fechaNotificacion.setDate(ahora.getDate() + diferenciaDias);
+            fechaNotificacion.setHours(hora, minuto, 0, 0);
+            
+            // Si la hora ya pasó hoy, programar para la próxima semana
+            if (fechaNotificacion <= ahora) {
+              fechaNotificacion.setDate(fechaNotificacion.getDate() + 7);
+            }
+            
+            // Asegurarse de que la fecha sea válida
+            if (isNaN(fechaNotificacion.getTime())) {
+              console.error('❌ Fecha de notificación inválida después de ajustar días');
+              continue;
+            }
+            
+            console.log(`\n📅 Programando alarma ${i + 1} para el día ${dia}:`);
+            console.log('- Hora seleccionada (local):', `${String(hora).padStart(2, '0')}:${String(minuto).padStart(2, '0')}`);
+            console.log('- Fecha programada (local):', fechaNotificacion.toString());
+            
+            // Preparar datos para la notificación
+            const notificationData = {
+              programacionId,
+              alarmaIndex: i,
+              dia,
+              hora: `${String(hora).padStart(2, '0')}:${String(minuto).padStart(2, '0')}`,
+              timezone: timeZone,
+              sound: alarma.sound || 'default',
+              originalDate: fechaNotificacion.toISOString(),
+            };
+            
+            // Si por alguna razón la fecha no es válida, saltar a la siguiente iteración
+            if (isNaN(fechaNotificacion.getTime())) {
+              console.error('❌ Fecha inválida después de ajustar:', {
+                ahora: ahora.toString(),
+                dia,
+                diaNumero,
+                diaActual,
+                diferenciaDias,
+                hora,
+                minuto
+              });
+              continue;
+            }
+            
+            // Verificar si la fecha es válida
+            if (isNaN(fechaNotificacion.getTime())) {
+              console.error('❌ Fecha de notificación inválida después de ajustar días');
+              console.log('- Día actual:', ahora.toString());
+              console.log('- Día objetivo:', dia);
+              console.log('- Diferencia de días:', diferenciaDias);
+              continue;
+            }
+            
+            // Asegurarse de que la fecha sea en el futuro
+            if (fechaNotificacion <= ahora) {
+              fechaNotificacion.setDate(fechaNotificacion.getDate() + 7);
+              console.log('⚠️ La fecha estaba en el pasado, ajustando a la próxima semana:', fechaNotificacion.toString());
+            }
+            
+            // Debug: Mostrar información detallada
+            console.log('\n📅 Programando alarma:');
+            console.log('- Hora seleccionada (local):', `${hora.toString().padStart(2, '0')}:${minuto.toString().padStart(2, '0')}`);
+            console.log('- Fecha programada (local):', fechaNotificacion.toString());
+            console.log('- Día de la semana:', ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'][fechaNotificacion.getDay()]);
+            
+            try {
+              const notificationId = await scheduleNotification({
+                id: `${programacionId}_${i}_${dia}`,
+                title: 'Recordatorio de medicación',
+                body: `Es hora de tomar ${programacionData.nombre_medicamento || 'tu medicamento'}`,
+                sound: alarma.sound || 'default',
+                date: new Date(fechaNotificacion), // Crear una nueva instancia de Date para evitar problemas de referencia
+                data: {
+                  programacionId,
+                  alarmaIndex: i,
+                  dia,
+                  hora: alarma.time ? alarma.time.toString() : '00:00',
+                },
+              });
+              
+              if (notificationId) {
+                console.log('✅ Notificación programada con éxito. ID:', notificationId);
+                alarmasProgramadas.push({
+                  ...alarma,
+                  notificationId,
+                  fechaProgramada: fechaNotificacion.toISOString(),
+                });
+              } else {
+                console.error('⚠️ No se pudo programar la notificación (ID nulo)');
+              }
+            } catch (error) {
+              console.error('❌ Error al programar notificación:', error);
+            }
+          }
+        } catch (error) {
+          console.error('❌ Error procesando alarma:', error);
+        }
+      }
+      
+      return alarmasProgramadas;
+    } catch (error) {
+      console.error('Error al programar alarmas:', error);
+      Alert.alert('Error', 'No se pudieron programar las alarmas.');
+      return [];
+    }
+  };
+
+  // Crear programación
   const crearProgramacion = async () => {
     setLoading(true);
 
     try {
+      // Programar las alarmas en el sistema de notificaciones
+      const alarmasProgramadas = await programarAlarmas();
+      
       const diasSeleccionados = programacionData.dias_seleccionados || [];
       const horariosConfigurados = programacionData.horarios || [];
 
-      // Preparar horarios en el formato correcto para la tabla horarios_tratamiento
-      const horariosParaAPI = horariosConfigurados.flatMap((horario) =>
-        diasSeleccionados.map((dia) => ({
+      // Función para formatear la hora en formato HH:mm
+      const formatTime = (time) => {
+        if (!time) return '00:00';
+        
+        // Si es un string en formato HH:mm, devolverlo directamente
+        if (typeof time === 'string' && time.match(/^\d{1,2}:\d{2}$/)) {
+          return time;
+        }
+        
+        // Si es un objeto Date
+        if (time instanceof Date) {
+          const hours = String(time.getHours()).padStart(2, '0');
+          const minutes = String(time.getMinutes()).padStart(2, '0');
+          return `${hours}:${minutes}`;
+        }
+        
+        // Si es un objeto con propiedades hours y minutes
+        if (time && typeof time === 'object' && 'hours' in time && 'minutes' in time) {
+          const hours = String(time.hours).padStart(2, '0');
+          const minutes = String(time.minutes).padStart(2, '0');
+          return `${hours}:${minutes}`;
+        }
+        
+        return '00:00';
+      };
+
+      // Preparar los datos de las alarmas para el envío
+      const alarmasParaEnviar = alarms.map((alarma, index) => ({
+        ...alarma,
+        // Incluir el ID de notificación programada si existe
+        notificationId: alarmasProgramadas[index]?.notificationId,
+        hora: formatTime(alarma.time),
+        dias: alarma.days?.join(',') || '',
+        activa: alarma.enabled || false,
+        sonido: alarma.sound || 'default',
+        vibrar: alarma.vibrate || false
+      }));
+
+      // Procesar horarios para eliminar duplicados
+      const horariosUnicos = [];
+      const horariosVistos = new Set();
+      
+      // Primero normalizamos los horarios (quitamos segundos si existen)
+      const horariosNormalizados = horariosConfigurados.map(horario => ({
+        ...horario,
+        hora: horario.hora.includes(':') ? 
+              horario.hora.split(':').slice(0, 2).join(':') : 
+              horario.hora
+      }));
+      
+      // Filtramos duplicados
+      horariosNormalizados.forEach(horario => {
+        if (!horariosVistos.has(horario.hora)) {
+          horariosVistos.add(horario.hora);
+          horariosUnicos.push(horario);
+        }
+      });
+      
+      // Creamos los horarios para la API
+      const horariosParaAPI = horariosUnicos.flatMap((horario) =>
+        programacionData.dias_seleccionados.map((dia) => ({
           dia_semana: dia,
           hora: horario.hora + ":00", // Agregar segundos al formato de hora
-          dosis: horario.dosis,
+          dosis: horario.dosis || 1,
           activo: 1,
         }))
       );
+      
+      console.log('Horarios únicos para guardar:', horariosUnicos);
+      console.log('Horarios para API:', horariosParaAPI);
 
       const dataToSend = {
         usuario_id: user.usuario_id,
@@ -418,6 +897,7 @@ const Medicamentos = ({ navigation }) => {
         dosis_por_toma: programacionData.dosis_por_toma,
         observaciones: "",
         horarios: horariosParaAPI,
+        alarmas: alarmasParaEnviar
       };
 
       console.log("📤 Enviando datos:", dataToSend);
@@ -427,25 +907,40 @@ const Medicamentos = ({ navigation }) => {
         await actualizarProgramacion(editandoProgramacion.programacion_id);
       } else {
         // Si estamos creando, usar el endpoint de creación
+        console.log("📤 Enviando solicitud para crear programación...");
         const response = await apiRequest("/crear_programacion.php", {
           method: "POST",
           body: JSON.stringify(dataToSend),
         });
 
-        console.log("📥 Respuesta:", response);
+        console.log("📥 Respuesta del servidor:", response);
 
-        if (response.success && response.data.success) {
-          const programacionId = response.data.programacion_id;
-          const horariosCreados = response.data.horarios_creados || 0;
+        // Verificar diferentes formatos de respuesta
+        if ((response.success || response.data?.success) && (response.data?.programacion_id || response.programacion_id)) {
+          const programacionId = response.data?.programacion_id || response.programacion_id;
+          const horariosCreados = response.data?.horarios_creados || response.horarios_creados || 0;
           let mensaje = `¡Tratamiento programado exitosamente con ${horariosCreados} horarios!`;
 
-          alert(mensaje);
-
+          // Mostrar mensaje de éxito
+          Alert.alert("Éxito", mensaje);
+          
+          // Cerrar el modal y limpiar el formulario
           setModalVisible(false);
           resetearFormulario();
-          cargarProgramaciones();
+          
+          // Forzar recarga de programaciones
+          console.log("🔄 Recargando lista de programaciones...");
+          await cargarProgramaciones();
+          
+          // También recargar las tomas de hoy
+          await cargarTomasHoy();
+          
+          console.log("✅ Lista de programaciones actualizada");
         } else {
-          alert("Error: " + (response.data?.error || "Error desconocido"));
+          // Mostrar mensaje de error detallado
+          const errorMessage = response.data?.error || response.error || "Error desconocido al crear el tratamiento";
+          console.error("Error al crear programación:", errorMessage);
+          Alert.alert("Error", errorMessage);
         }
       }
     } catch (error) {
@@ -490,39 +985,40 @@ const Medicamentos = ({ navigation }) => {
       nombre_comercial: programacion.nombre_comercial,
     });
 
-    // Obtener horarios reales - usar la misma lógica que en renderProgramacion
-    const horariosReales = (() => {
-      if (!programacion.horarios) return [];
-
-      if (
-        Array.isArray(programacion.horarios) &&
-        programacion.horarios.length > 0
-      ) {
-        const primerElemento = programacion.horarios[0];
-        if (Array.isArray(primerElemento)) {
-          return primerElemento;
-        }
-        return programacion.horarios;
+    // Obtener horarios únicos sin duplicados
+    const horariosUnicos = [];
+    const horariosVistos = new Set();
+    
+    const horariosProcesados = Array.isArray(programacion.horarios) ? programacion.horarios : [];
+    
+    // Procesar horarios para obtener solo los únicos
+    horariosProcesados.forEach(horario => {
+      const hora = horario.hora ? horario.hora.split(':').slice(0, 2).join(':') : '';
+      const clave = hora; // Usamos solo la hora como clave única
+      
+      if (hora && !horariosVistos.has(clave)) {
+        horariosVistos.add(clave);
+        horariosUnicos.push({
+          hora: hora,
+          dosis: horario.dosis || 1
+        });
       }
+    });
 
-      return [];
-    })();
-
-    console.log("Horarios reales:", horariosReales);
-    console.log("Estructura del primer horario:", horariosReales[0]);
-
-    // Convertir horarios al formato del formulario
-    const horariosFormato = horariosReales.map((horario) => ({
-      dia: horario.dia_semana || horario.dia || horario.dias,
-      hora: horario.hora,
-      dosis: horario.dosis,
-    }));
-
+    console.log("Horarios únicos:", horariosUnicos);
+    
+    // Obtener días seleccionados únicos
     const diasSeleccionados = [
-      ...new Set(horariosReales.map((h) => h.dia_semana || h.dia || h.dias)),
+      ...new Set(horariosProcesados.map(h => h.dia_semana || h.dia || h.dias).filter(Boolean))
     ];
+    
     console.log("Días seleccionados:", diasSeleccionados);
-    console.log("Horarios reales para extraer días:", horariosReales);
+    
+    // Crear formato para el estado
+    const horariosFormato = horariosUnicos.map(horario => ({
+      hora: horario.hora,
+      dosis: horario.dosis
+    }));
 
     setProgramacionData({
       nombre_tratamiento:
@@ -555,15 +1051,38 @@ const Medicamentos = ({ navigation }) => {
         horariosConfigurados
       );
 
-      // Preparar horarios en el formato correcto para la tabla horarios_tratamiento
-      const horariosParaAPI = horariosConfigurados.flatMap((horario) =>
-        diasSeleccionados.map((dia) => ({
+      // Procesar horarios para eliminar duplicados
+      const horariosUnicos = [];
+      const horariosVistos = new Set();
+      
+      // Primero normalizamos los horarios (quitamos segundos si existen)
+      const horariosNormalizados = horariosConfigurados.map(horario => ({
+        ...horario,
+        hora: horario.hora.includes(':') ? 
+              horario.hora.split(':').slice(0, 2).join(':') : 
+              horario.hora
+      }));
+      
+      // Filtramos duplicados
+      horariosNormalizados.forEach(horario => {
+        if (!horariosVistos.has(horario.hora)) {
+          horariosVistos.add(horario.hora);
+          horariosUnicos.push(horario);
+        }
+      });
+      
+      // Creamos los horarios para la API
+      const horariosParaAPI = horariosUnicos.flatMap((horario) =>
+        programacionData.dias_seleccionados.map((dia) => ({
           dia_semana: dia,
           hora: horario.hora + ":00", // Agregar segundos al formato de hora
-          dosis: horario.dosis,
+          dosis: horario.dosis || 1,
           activo: 1,
         }))
       );
+      
+      console.log('Horarios únicos para guardar:', horariosUnicos);
+      console.log('Horarios para API:', horariosParaAPI);
 
       console.log("📊 Cálculo de horarios:");
       console.log("📊 Horarios configurados:", horariosConfigurados.length);
@@ -718,48 +1237,178 @@ const Medicamentos = ({ navigation }) => {
     }
   };
 
-  
+  // Actualizar las alarmas cuando cambian
+  const handleAlarmsChange = (updatedAlarms) => {
+    setAlarms(updatedAlarms);
+  };
 
-  
+  // Función para renderizar cuando la lista está vacía
+  const renderEmptyComponent = () => {
+    console.log('🔍 Mostrando componente vacío. Estado actual:', {
+      loading,
+      error,
+      pastillasLength: pastillas.length,
+      filteredPastillasLength: filteredPastillas.length,
+      searchText
+    });
+    
+    return (
+      <View style={[styles.emptyContainer, { justifyContent: 'center', padding: 20 }]}>
+        <MaterialIcons name="medication" size={64} color="#7A2C34" style={styles.emptyIcon} />
+        
+        {loading ? (
+          <>
+            <Text style={styles.emptyText}>Cargando medicamentos...</Text>
+            <ActivityIndicator size="large" color="#7A2C34" style={{ marginTop: 20 }} />
+          </>
+        ) : error ? (
+          <>
+            <Text style={[styles.emptyText, {color: '#ff6b6b'}]}>Error al cargar los medicamentos</Text>
+            <Text style={[styles.emptySubtext, { textAlign: 'center', marginTop: 10 }]}>{error}</Text>
+          </>
+        ) : searchText && filteredPastillas.length === 0 ? (
+          <>
+            <Text style={styles.emptyText}>No se encontraron coincidencias</Text>
+            <Text style={[styles.emptySubtext, { textAlign: 'center', marginTop: 10 }]}>
+              No hay medicamentos que coincidan con "{searchText}"
+            </Text>
+          </>
+        ) : pastillas.length === 0 ? (
+          <>
+            <Text style={styles.emptyText}>No hay medicamentos disponibles</Text>
+            <Text style={[styles.emptySubtext, { textAlign: 'center', marginTop: 10 }]}>
+              No se encontraron medicamentos en la base de datos
+            </Text>
+          </>
+        ) : (
+          <Text style={styles.emptyText}>No hay medicamentos para mostrar</Text>
+        )}
+        
+        {!loading && (
+          <TouchableOpacity 
+            style={[styles.retryButton, { marginTop: 20 }]}
+            onPress={cargarPastillas}
+          >
+            <MaterialIcons name="refresh" size={20} color="#fff" />
+            <Text style={styles.retryButtonText}>Reintentar</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
 
   // Renderizar item de pastilla
-  const renderPastillaItem = ({ item }) => (
-    <TouchableOpacity
-      style={[
-        styles.pastillaItem,
-        editandoProgramacion ? styles.pastillaItemDisabled : null,
-      ]}
-      onPress={() => seleccionarPastilla(item)}
-      onLongPress={() => mostrarDetallesPastilla(item)}
-      delayLongPress={500}
-      disabled={!!editandoProgramacion}
-    >
-      <View style={styles.pastillaInfo}>
-        <Text style={styles.pastillaNombre}>{item.nombre_comercial}</Text>
-        <Text style={styles.pastillaDescripcion}>{item.descripcion}</Text>
-        <View style={styles.pastillaDetails}>
-          {item.presentacion && (
-            <Text style={styles.pastillaPresentacion}>{item.presentacion}</Text>
-          )}
-          {item.peso_unidad && (
-            <Text style={styles.pastillaPeso}>{item.peso_unidad} mg</Text>
-          )}
+  const renderPastillaItem = ({ item }) => {
+    if (!item) return null;
+    
+    // Debug: Mostrar la estructura completa del ítem
+    console.log('🔍 Estructura del ítem:', JSON.stringify(item, null, 2));
+    
+    // Normalizar los datos del ítem para manejar diferentes estructuras
+    const medicamento = {
+      id: item.remedio_global_id || item.id || Math.random().toString(36).substr(2, 9),
+      nombre: (item.nombre_comercial || item.nombre || 'Sin nombre').trim(),
+      descripcion: (item.descripcion || '').trim(),
+      presentacion: (item.presentacion || 'Sin presentación').trim(),
+      peso_unidad: (item.peso_unidad || 'N/A').toString().trim(),
+      tipo: (item.tipo_tratamiento || item.tipo || '').trim(),
+      // Agregar más campos según sea necesario
+      ...item // Mantener el objeto original completo
+    };
+    
+    // Determinar si mostrar la unidad de medida (ej: mg)
+    const mostrarUnidad = medicamento.peso_unidad && 
+                         medicamento.peso_unidad !== 'N/A' && 
+                         !isNaN(parseFloat(medicamento.peso_unidad));
+    
+    return (
+      <TouchableOpacity
+        style={[
+          styles.pastillaItem,
+          editandoProgramacion && styles.pastillaItemDisabled,
+          { opacity: editandoProgramacion ? 0.6 : 1 }
+        ]}
+        onPress={() => {
+          console.log('👉 Pastilla seleccionada:', medicamento.nombre);
+          seleccionarPastilla(medicamento);
+        }}
+        onLongPress={() => mostrarDetallesPastilla(medicamento)}
+        delayLongPress={500}
+        disabled={!!editandoProgramacion}
+        activeOpacity={0.7}
+      >
+        <View style={styles.pastillaInfo}>
+          {/* Encabezado con nombre y tipo */}
+          <View style={styles.pastillaHeader}>
+            <Text style={styles.pastillaNombre} numberOfLines={1}>
+              {medicamento.nombre}
+            </Text>
+            {medicamento.tipo ? (
+              <View style={[
+                styles.pastillaTipo,
+                !medicamento.tipo && { display: 'none' }
+              ]}>
+                <Text style={styles.pastillaTipoText} numberOfLines={1}>
+                  {medicamento.tipo}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+          
+          {/* Descripción (si existe) */}
+          {medicamento.descripcion ? (
+            <Text 
+              style={styles.pastillaDescripcion} 
+              numberOfLines={2}
+              ellipsizeMode="tail"
+            >
+              {medicamento.descripcion}
+            </Text>
+          ) : null}
+          
+          {/* Detalles de presentación y peso */}
+          <View style={styles.pastillaDetails}>
+            {medicamento.presentacion && medicamento.presentacion !== 'Sin presentación' && (
+              <Text 
+                style={styles.pastillaPresentacion} 
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {medicamento.presentacion}
+              </Text>
+            )}
+            
+            {mostrarUnidad && (
+              <Text style={styles.pastillaPeso}>
+                {parseFloat(medicamento.peso_unidad).toLocaleString()} mg
+              </Text>
+            )}
+          </View>
+          
+          {/* Indicador de acción */}
+          <Text style={styles.longPressHint}>
+            Mantén presionado para ver detalles
+          </Text>
         </View>
-        <Text style={styles.longPressHint}>
-          Mantén presionado para ver detalles
-        </Text>
-      </View>
-      <MaterialCommunityIcons name="chevron-right" size={24} color="#7A2C34" />
-    </TouchableOpacity>
-  );
+        
+        {/* Ícono de flecha */}
+        <MaterialIcons 
+          name="chevron-right" 
+          size={24} 
+          color="#7A2C34" 
+          style={styles.pastillaArrow}
+        />
+      </TouchableOpacity>
+    );
+  };
 
   // Renderizar header del modal con progreso (simplificado)
   const renderModalHeader = () => (
     <View style={styles.modalHeader}>
       <View style={styles.progressContainer}>
         <View style={styles.modalTitleContainer}>
-          <MaterialCommunityIcons
-            name={editandoProgramacion ? "pencil" : "plus-circle"}
+          <MaterialIcons
+            name={editandoProgramacion ? "edit" : "add-circle"}
             size={24}
             color="#7A2C34"
           />
@@ -774,26 +1423,18 @@ const Medicamentos = ({ navigation }) => {
           {currentStep === 2 && "Paso 2: Detalles del tratamiento"}
           {currentStep === 3 && "Paso 3: ¿Qué días?"}
           {currentStep === 4 && "Paso 4: ¿A qué hora?"}
-          {currentStep === 5 && "Paso 5: Confirmación"}
+          {currentStep === 5 && "Paso 5: Configuración de alarmas"}
+          {currentStep === 6 && "Paso 6: Confirmación"}
         </Text>
         <View style={styles.progressBar}>
           <View
             style={[
               styles.progressFill,
-              { width: `${(currentStep / 5) * 100}%` },
+              { width: `${(currentStep / totalSteps) * 100}%` },
             ]}
           />
         </View>
       </View>
-      <TouchableOpacity
-        onPress={() => {
-          setModalVisible(false);
-          resetearFormulario();
-        }}
-        style={styles.closeButton}
-      >
-        <MaterialCommunityIcons name="close" size={24} color="#7A2C34" />
-      </TouchableOpacity>
     </View>
   );
 
@@ -804,11 +1445,10 @@ const Medicamentos = ({ navigation }) => {
     return (
       <View style={styles.searchContainer}>
         <View style={styles.searchInputContainer}>
-          <Ionicons
+          <MaterialIcons
             name="search"
             size={20}
             color="#7A2C34"
-            style={styles.searchIcon}
           />
           <TextInput
             style={styles.searchInput}
@@ -824,7 +1464,7 @@ const Medicamentos = ({ navigation }) => {
               onPress={() => filtrarPastillas("")}
               style={styles.clearButton}
             >
-              <Ionicons name="close-circle" size={20} color="#666" />
+              <MaterialIcons name="cancel" size={20} color="#666" />
             </TouchableOpacity>
           )}
         </View>
@@ -878,16 +1518,16 @@ const Medicamentos = ({ navigation }) => {
 
     const diasSeleccionados = programacionData.dias_seleccionados || [];
     console.log(
-      "🎯 Renderizando días - días seleccionados:",
+      " Renderizando días - días seleccionados:",
       diasSeleccionados
     );
-    console.log("🎯 Estado completo de programacionData:", programacionData);
+    console.log(" Estado completo de programacionData:", programacionData);
 
     return (
       <View style={styles.configuracionContainer}>
         {/* Header con información del medicamento */}
         <View style={styles.stepHeader}>
-          <MaterialCommunityIcons name="pill" size={24} color="#7A2C34" />
+          <MaterialIcons name="medication" size={24} color="#7A2C34" />
           <View style={styles.stepHeaderContent}>
             <Text style={styles.stepHeaderTitle}>Medicamento seleccionado</Text>
             <Text style={styles.stepHeaderSubtitle}>
@@ -899,8 +1539,8 @@ const Medicamentos = ({ navigation }) => {
         {/* Sección de días */}
         <View style={styles.diasSection}>
           <View style={styles.sectionHeader}>
-            <MaterialCommunityIcons
-              name="calendar-multiple"
+            <MaterialIcons
+              name="event-note"
               size={20}
               color="#7A2C34"
             />
@@ -923,7 +1563,7 @@ const Medicamentos = ({ navigation }) => {
                   onPress={() => toggleDia(dia.key)}
                   activeOpacity={0.7}
                 >
-                  <MaterialCommunityIcons
+                  <MaterialIcons
                     name={dia.icon}
                     size={20}
                     color={isSelected ? "#ffffff" : "#7A2C34"}
@@ -953,7 +1593,7 @@ const Medicamentos = ({ navigation }) => {
         {/* Resumen de selección */}
         {diasSeleccionados.length > 0 && (
           <View style={styles.selectionSummary}>
-            <MaterialCommunityIcons
+            <MaterialIcons
               name="check-circle"
               size={20}
               color="#28a745"
@@ -991,7 +1631,7 @@ const Medicamentos = ({ navigation }) => {
         {/* Información del medicamento */}
          {/* Header con información del medicamento */}
          <View style={styles.stepHeader}>
-          <MaterialCommunityIcons name="pill" size={24} color="#7A2C34" />
+          <MaterialIcons name="medication" size={24} color="#7A2C34" />
           <View style={styles.stepHeaderContent}>
             <Text style={styles.stepHeaderTitle}>Medicamento seleccionado</Text>
             <Text style={styles.stepHeaderSubtitle}>
@@ -1016,8 +1656,8 @@ const Medicamentos = ({ navigation }) => {
         {/* Horarios configurados */}
         <View style={styles.horariosContainer}>
           <View style={styles.horariosTitleContainer}>
-            <MaterialCommunityIcons
-              name="table-clock"
+            <MaterialIcons
+              name="access-time"
               size={35}
               color="#7A2C34"
             />
@@ -1041,8 +1681,8 @@ const Medicamentos = ({ navigation }) => {
                     accessibilityLabel={`Editar horario ${index + 1}`}
                   >
                     <View style={styles.horarioContent}>
-                      <MaterialCommunityIcons
-                        name="clock-outline"
+                      <MaterialIcons
+                        name="access-time"
                         size={24}
                         color="#7A2C34"
                       />
@@ -1057,8 +1697,8 @@ const Medicamentos = ({ navigation }) => {
                     }}
                     accessibilityLabel={`Eliminar horario ${index + 1}`}
                   >
-                    <MaterialCommunityIcons
-                      name="trash-can-outline"
+                    <MaterialIcons
+                      name="delete-outline"
                       size={40}
                       color="#7A2C34"
                     />
@@ -1069,8 +1709,8 @@ const Medicamentos = ({ navigation }) => {
             </>
           ) : (
             <View style={styles.noHorariosContainer}>
-              <MaterialCommunityIcons
-                name="clock-outline"
+              <MaterialIcons
+                name="access-time"
                 size={48}
                 color="#cbd5e0"
               />
@@ -1094,9 +1734,128 @@ const Medicamentos = ({ navigation }) => {
     );
   };
 
-  // Renderizar paso 5: Confirmación - Versión Simplificada
+  // Mostrar selector de sonido con vista previa (nueva implementación)
+
+  // Actualizar sonido de la alarma
+  const updateAlarmSound = (index, sound) => {
+    const newAlarms = [...alarms];
+    if (!newAlarms[index]) {
+      newAlarms[index] = createNewAlarm(index);
+    }
+    newAlarms[index].sound = sound;
+    setAlarms(newAlarms);
+    handleAlarmsChange(newAlarms);
+  };
+
+  // Crear nueva alarma con valores por defecto
+  const createNewAlarm = (index) => {
+    return {
+      id: null,
+      time: new Date(`2000-01-01T${programacionData.horarios[index].hora}`),
+      enabled: true,
+      sound: 'default',
+      vibrate: true,
+      volume: 80,
+      name: `Alarma ${index + 1}`,
+      days: programacionData.dias_seleccionados || []
+    };
+  };
+
+  // Renderizar paso 5: Configuración de alarmas
+  const renderAlarmConfig = () => {
+    return (
+      <View style={styles.stepContainer}>
+        <View style={styles.stepHeader}>
+          <Text style={styles.stepTitle}>Configuración de notificaciones</Text>
+          <Text style={styles.stepSubtitle}>
+            Activa o desactiva las notificaciones para cada horario
+          </Text>
+        </View>
+
+        <View style={styles.alarmsContainer}>
+          {programacionData.horarios && programacionData.horarios.length > 0 ? (
+            programacionData.horarios.map((horario, index) => {
+              const alarm = alarms[index] || {
+                id: null,
+                time: new Date(`2000-01-01T${horario.hora}`),
+                enabled: true,
+                sound: 'default',
+                vibrate: true,
+                volume: 80,
+                name: `Alarma ${index + 1}`
+              };
+
+              return (
+                <View key={index} style={[
+                  styles.alarmItem,
+                  !alarm.enabled && styles.alarmItemDisabled
+                ]}>
+                  <TouchableOpacity 
+                    style={styles.alarmContent}
+                    onPress={() => showSoundPicker(index)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.alarmTimeContainer}>
+                      <View style={styles.alarmTimeRow}>
+                        <Text style={styles.alarmTime}>
+                          {new Date(`2000-01-01T${horario.hora}`).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </Text>
+                        <View style={styles.soundIndicator}>
+                          <MaterialIcons 
+                            name={alarm.sound === 'alarm' ? 'alarm' : alarm.sound === 'tone' ? 'music-note' : 'notifications-none'} 
+                            size={16} 
+                            color={alarm.enabled ? '#7A2C34' : '#999'} 
+                          />
+                        </View>
+                      </View>
+                      <Text style={styles.alarmDias}>
+                        {programacionData.dias_seleccionados
+                          ? programacionData.dias_seleccionados
+                              .map(dia => ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'][dia])
+                              .join(', ')
+                          : ''}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                  
+                  <Switch
+                    value={alarm.enabled}
+                    onValueChange={(value) => {
+                      const newAlarms = [...alarms];
+                      if (!newAlarms[index]) {
+                        newAlarms[index] = {
+                          ...alarm,
+                          enabled: value,
+                          time: new Date(`2000-01-01T${horario.hora}`),
+                          days: programacionData.dias_seleccionados || []
+                        };
+                      } else {
+                        newAlarms[index].enabled = value;
+                      }
+                      setAlarms(newAlarms);
+                      handleAlarmsChange(newAlarms);
+                    }}
+                    trackColor={{ false: '#E0E0E0', true: '#7A2C34' }}
+                    thumbColor="white"
+                  />
+                </View>
+              );
+            })
+          ) : (
+            <View style={styles.noAlarmsContainer}>
+              <MaterialIcons name="notifications-off" size={48} color="#CCCCCC" />
+              <Text style={styles.noAlarmsText}>No hay horarios configurados</Text>
+              <Text style={styles.noAlarmsSubtext}>Vuelve al paso anterior para configurar los horarios</Text>
+            </View>
+          )}
+        </View>
+      </View>
+    );
+  };
+
+  // Renderizar paso 6: Confirmación
   const renderConfirmacion = () => {
-    if (currentStep !== 5) return null;
+    if (currentStep !== 6) return null;
 
     return (
       <View style={{flex: 1, backgroundColor: '#f8f9fa'}}>
@@ -1126,7 +1885,7 @@ const Medicamentos = ({ navigation }) => {
               alignItems: 'center',
               marginBottom: 12
             }}>
-              <MaterialCommunityIcons name="check-circle" size={32} color="#fff" />
+              <MaterialIcons name="check-circle" size={32} color="#fff" />
             </View>
             <Text style={{
               fontSize: 20,
@@ -1163,7 +1922,7 @@ const Medicamentos = ({ navigation }) => {
             {/* Información del medicamento */}
             {/* Header con información del medicamento */}
         <View style={styles.stepHeader}>
-          <MaterialCommunityIcons name="pill" size={24} color="#7A2C34" />
+          <MaterialIcons name="medication" size={24} color="#7A2C34" />
           <View style={styles.stepHeaderContent}>
             <Text style={styles.stepHeaderTitle}>Medicamento seleccionado</Text>
             <Text style={styles.stepHeaderSubtitle}>
@@ -1175,7 +1934,7 @@ const Medicamentos = ({ navigation }) => {
             {/* Días seleccionados */}
             <View style={{marginBottom: 16}}>
               <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 8}}>
-                <MaterialCommunityIcons name="calendar" size={20} color="#7A2C34" />
+                <MaterialIcons name="event" size={20} color="#7A2C34" />
                 <Text style={{marginLeft: 8, fontWeight: '600', color: '#4a5568'}}>Días seleccionados</Text>
               </View>
               <View style={{flexDirection: 'row', flexWrap: 'wrap', paddingLeft: 28}}>
@@ -1211,7 +1970,7 @@ const Medicamentos = ({ navigation }) => {
             {programacionData.fecha_fin && (
               <View style={{marginBottom: 16}}>
                 <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 8}}>
-                  <MaterialCommunityIcons name="calendar-end" size={20} color="#7A2C34" />
+                  <MaterialIcons name="event-available" size={20} color="#7A2C34" />
                   <Text style={{marginLeft: 8, fontWeight: '600', color: '#4a5568'}}>Fecha de finalización</Text>
                 </View>
                 <View style={{paddingLeft: 28}}>
@@ -1229,7 +1988,7 @@ const Medicamentos = ({ navigation }) => {
             {/* Horarios */}
             <View>
               <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 8}}>
-                <MaterialCommunityIcons name="clock" size={20} color="#7A2C34" />
+                <MaterialIcons name="access-time" size={20} color="#7A2C34" />
                 <Text style={{marginLeft: 8, fontWeight: '600', color: '#4a5568'}}>Horarios programados</Text>
               </View>
               <View style={{paddingLeft: 28}}>
@@ -1246,7 +2005,7 @@ const Medicamentos = ({ navigation }) => {
                         borderRadius: 8
                       }}
                     >
-                      <MaterialCommunityIcons name="clock-outline" size={18} color="#7A2C34" style={{marginRight: 8}} />
+                      <MaterialIcons name="access-time" size={18} color="#7A2C34" style={{marginRight: 8}} />
                       <Text style={{fontSize: 16, color: '#2d3748', fontWeight: '500'}}>{horario.hora}</Text>
                     </View>
                   ))
@@ -1267,7 +2026,7 @@ const Medicamentos = ({ navigation }) => {
             marginBottom: 24, // Aumentado para dar más espacio al final
             marginTop: 'auto' // Empuja este elemento hacia abajo
           }}>
-            <MaterialCommunityIcons name="information-outline" size={20} color="#7A2C34" />
+            <MaterialIcons name="info-outline" size={20} color="#7A2C34" />
             <Text style={{
               flex: 1,
               marginLeft: 10,
@@ -1315,11 +2074,11 @@ const Medicamentos = ({ navigation }) => {
                   : styles.estadoInactivo,
               ]}
             >
-              <MaterialCommunityIcons
+              <MaterialIcons
                 name={
                   programacion.estado === "activo"
                     ? "check-circle"
-                    : "pause-circle"
+                    : "pause-circle-outline"
                 }
                 size={16}
                 color={programacion.estado === "activo" ? "#fff" : "#666"}
@@ -1406,7 +2165,7 @@ const Medicamentos = ({ navigation }) => {
             {/* Header del modal */}
             <View style={styles.modalDetallesHeader}>
               <View style={styles.modalDetallesHeaderContent}>
-                <MaterialCommunityIcons name="calendar-clock" size={24} color="#7A2C34" />
+                <MaterialIcons name="event-available" size={24} color="#7A2C34" />
                 <Text style={styles.modalDetallesTitle}>
                   {programacionDetalles.nombre_tratamiento ||
                     programacionDetalles.nombre_comercial ||
@@ -1420,7 +2179,7 @@ const Medicamentos = ({ navigation }) => {
                 }}
                 style={styles.closeButton}
               >
-                <MaterialCommunityIcons name="close" size={24} color="#666" />
+                <MaterialIcons name="close" size={24} color="#666" />
               </TouchableOpacity>
             </View>
 
@@ -1432,7 +2191,7 @@ const Medicamentos = ({ navigation }) => {
             >
               {/* Información básica */}
               <View style={styles.medicamentoCard}>
-                <MaterialCommunityIcons name="pill" size={32} color="#7A2C34" />
+                <MaterialIcons name="medication" size={32} color="#7A2C34" />
                 <Text style={styles.medicamentoNombre}>
                   {programacionDetalles.nombre_comercial || "No especificado"}
                 </Text>
@@ -1442,7 +2201,7 @@ const Medicamentos = ({ navigation }) => {
 
               {/* Estado */}
               <View style={styles.detalleItem}>
-                <MaterialCommunityIcons
+                <MaterialIcons
                   name="check-circle"
                   size={20}
                   color="#7A2C34"
@@ -1460,8 +2219,8 @@ const Medicamentos = ({ navigation }) => {
               {/* Fecha de fin */}
               {programacionDetalles.fecha_fin && (
                 <View style={styles.detalleItem}>
-                  <MaterialCommunityIcons
-                    name="calendar-end"
+                  <MaterialIcons
+                    name="event-available"
                     size={20}
                     color="#7A2C34"
                   />
@@ -1477,8 +2236,8 @@ const Medicamentos = ({ navigation }) => {
               {/* Horarios */}
               <View style={styles.horariosDetalleContainer}>
                 <View style={styles.horariosDetalleHeader}>
-                  <MaterialCommunityIcons
-                    name="table-clock"
+                  <MaterialIcons
+                    name="access-time"
                     size={20}
                     color="#7A2C34"
                   />
@@ -1498,29 +2257,56 @@ const Medicamentos = ({ navigation }) => {
                         <Text style={styles.tablaHeaderText}>Hora</Text>
                       </View>
                     </View>
-
-                    {/* Filas de la tabla */}
-                    {horariosReales.map((horario, index) => (
-                      <View key={index} style={styles.tablaRow}>
-                        <View style={styles.tablaCell}>
-                          <Text style={styles.tablaCellText}>
-                            {diasMap[
-                              horario.dia || horario.dias || horario.dia_semana
-                            ] || "N/A"}
+                    
+                    {/* Filas de la tabla agrupadas por día */}
+                    {Object.entries(
+                      horariosReales.reduce((acc, horario) => {
+                        const dia = horario.dia || horario.dias || horario.dia_semana;
+                        if (!acc[dia]) {
+                          acc[dia] = [];
+                        }
+                        acc[dia].push(horario.hora);
+                        return acc;
+                      }, {})
+                    ).map(([dia, horas], index, array) => (
+                      <View 
+                        key={index} 
+                        style={[
+                          styles.tablaRow,
+                          index === 0 && styles.tablaRowFirst,
+                          index === array.length - 1 && styles.tablaRowLast
+                        ]}
+                      >
+                        <View style={[styles.tablaCell, {flex: 1, justifyContent: 'center'}]}>
+                          <Text style={[styles.tablaCellText, styles.diaText]}>
+                            {dia.charAt(0).toUpperCase() + dia.slice(1)}
                           </Text>
                         </View>
-                        <View style={styles.tablaCell}>
-                          <Text style={styles.tablaCellText}>
-                            {formatearHora(horario.hora || "00:00")}
-                          </Text>
+                        <View style={[styles.tablaCell, {flex: 1, flexDirection: 'column', alignItems: 'center'}]}>
+                          {horas.map((hora, i) => {
+                            // Asegurarse de que la hora no tenga segundos
+                            const horaFormateada = hora.includes(':') ? hora.split(':').slice(0, 2).join(':') : hora;
+                            return (
+                              <Text 
+                                key={i} 
+                                style={[
+                                  styles.tablaCellText, 
+                                  styles.horarioText, 
+                                  {marginVertical: 2}]
+                                }
+                              >
+                                {horaFormateada}
+                              </Text>
+                            );
+                          })}
                         </View>
                       </View>
                     ))}
                   </View>
                 ) : (
                   <View style={styles.noHorariosContainer}>
-                    <MaterialCommunityIcons
-                      name="clock-outline"
+                    <MaterialIcons
+                      name="access-time"
                       size={24}
                       color="#999"
                     />
@@ -1549,7 +2335,7 @@ const Medicamentos = ({ navigation }) => {
                   }
                 }}
               >
-                <MaterialCommunityIcons name="pencil" size={20} color="#fff" />
+                <MaterialIcons name="edit" size={20} color="#fff" />
                 <Text style={styles.seleccionarButtonText}>
                   Editar Programación
                 </Text>
@@ -1574,11 +2360,11 @@ const Medicamentos = ({ navigation }) => {
                   );
                 }}
               >
-                <MaterialCommunityIcons
+                <MaterialIcons
                   name={
                     programacionDetalles.estado === "activo"
-                      ? "pause-circle"
-                      : "play-circle"
+                      ? "pause-circle-outline"
+                      : "play-circle-outline"
                   }
                   size={20}
                   color="#fff"
@@ -1598,7 +2384,7 @@ const Medicamentos = ({ navigation }) => {
                   confirmarEliminarProgramacion(programacionDetalles);
                 }}
               >
-                <MaterialCommunityIcons name="delete" size={20} color="#fff" />
+                <MaterialIcons name="delete" size={20} color="#fff" />
                 <Text style={styles.seleccionarButtonText}>Eliminar</Text>
               </TouchableOpacity>
             </View>
@@ -1627,7 +2413,7 @@ const Medicamentos = ({ navigation }) => {
             {/* Header */}
             <View style={styles.modalDetallesHeader}>
               <View style={styles.modalDetallesHeaderContent}>
-                <MaterialCommunityIcons name="pill" size={24} color="#7A2C34" />
+                <MaterialIcons name="medication" size={24} color="#7A2C34" />
                 <Text style={styles.modalDetallesTitle}>
                   Información del Medicamento
                 </Text>
@@ -1639,7 +2425,7 @@ const Medicamentos = ({ navigation }) => {
                 }}
                 style={styles.closeButton}
               >
-                <MaterialCommunityIcons name="close" size={24} color="#666" />
+                <MaterialIcons name="close" size={24} color="#666" />
               </TouchableOpacity>
             </View>
 
@@ -1651,7 +2437,7 @@ const Medicamentos = ({ navigation }) => {
             >
               {/* Nombre del medicamento destacado */}
               <View style={styles.medicamentoCard}>
-                <MaterialCommunityIcons name="pill" size={32} color="#7A2C34" />
+                <MaterialIcons name="medication" size={32} color="#7A2C34" />
                 <Text style={styles.medicamentoNombre}>
                   {pastillaDetalles.nombre_comercial}
                 </Text>
@@ -1660,8 +2446,7 @@ const Medicamentos = ({ navigation }) => {
               {/* Información detallada */}
               <View style={styles.detallesContainer}>
                 <View style={styles.detalleItem}>
-                  <MaterialCommunityIcons
-                    name="information"
+                  <MaterialIcons name="info"
                     size={20}
                     color="#7A2C34"
                   />
@@ -1675,8 +2460,8 @@ const Medicamentos = ({ navigation }) => {
 
                 {pastillaDetalles.presentacion && (
                   <View style={styles.detalleItem}>
-                    <MaterialCommunityIcons
-                      name="package-variant"
+                    <MaterialIcons
+                      name="inventory"
                       size={20}
                       color="#7A2C34"
                     />
@@ -1691,8 +2476,8 @@ const Medicamentos = ({ navigation }) => {
 
                 {pastillaDetalles.peso_unidad && (
                   <View style={styles.detalleItem}>
-                    <MaterialCommunityIcons
-                      name="scale-balance"
+                    <MaterialIcons
+                      name="scale"
                       size={20}
                       color="#7A2C34"
                     />
@@ -1707,8 +2492,8 @@ const Medicamentos = ({ navigation }) => {
 
                 {pastillaDetalles.efectos_secundarios && (
                   <View style={styles.detalleItem}>
-                    <MaterialCommunityIcons
-                      name="alert-circle"
+                    <MaterialIcons
+                      name="warning"
                       size={20}
                       color="#ff6b6b"
                     />
@@ -1725,7 +2510,7 @@ const Medicamentos = ({ navigation }) => {
 
                 {pastillaDetalles.estado && (
                   <View style={styles.detalleItem}>
-                    <MaterialCommunityIcons
+                    <MaterialIcons
                       name="check-circle"
                       size={20}
                       color="#28a745"
@@ -1751,7 +2536,7 @@ const Medicamentos = ({ navigation }) => {
                   seleccionarPastilla(pastillaDetalles);
                 }}
               >
-                <MaterialCommunityIcons name="check" size={20} color="#fff" />
+                <MaterialIcons name="check" size={20} color="#fff" />
                 <Text style={styles.seleccionarButtonText}>
                   Seleccionar este medicamento
                 </Text>
@@ -1763,99 +2548,467 @@ const Medicamentos = ({ navigation }) => {
     );
   };
 
+  // Estado para el selector de sonido mejorado
+  const [soundModalVisible, setSoundModalVisible] = useState(false);
+  const [editingSoundIndex, setEditingSoundIndex] = useState(null);
+  const [selectedSound, setSelectedSound] = useState('default');
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [soundPreviewTimeout, setSoundPreviewTimeout] = useState(null);
+
+  // Mostrar el modal de selector de sonido
+  const showSoundPicker = async (index) => {
+    try {
+      const currentSound = alarms[index]?.sound || 'default';
+      console.log('Mostrando selector de sonido para alarma', index, 'sonido actual:', currentSound);
+      
+      // Configurar el modo de audio antes de mostrar el modal
+      const audioConfig = {
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: true,
+        playThroughEarpieceAndroid: false,
+        shouldDuckAndroid: true,
+        // Usar valores numéricos directamente que son compatibles con todas las versiones
+        // 1 = INTERRUPTION_MODE_IOS_MIX_WITH_OTHERS
+        // 2 = INTERRUPTION_MODE_ANDROID_DO_NOT_MIX
+        interruptionModeIOS: 1,
+        interruptionModeAndroid: 2
+      };
+
+      console.log('🔊 Configurando audio en showSoundPicker con:', audioConfig);
+      await Audio.setAudioModeAsync(audioConfig);
+      
+      setSelectedSound(currentSound);
+      setEditingSoundIndex(index);
+      setSoundModalVisible(true);
+      
+      // Reproducir una vista previa del sonido actual
+      setTimeout(() => {
+        handleSoundPreview(currentSound).catch(e => 
+          console.error('Error al reproducir vista previa:', e)
+        );
+      }, 300);
+    } catch (error) {
+      console.error('Error al mostrar el selector de sonido:', error);
+      Alert.alert('Error', 'No se pudo abrir el selector de sonido');
+    }
+  };
+
+  // Manejar la vista previa del sonido
+  const handleSoundPreview = async (sound) => {
+    console.log('Iniciando handleSoundPreview con sonido:', sound);
+    
+    // Limpiar cualquier timeout existente
+    if (soundPreviewTimeout) {
+      console.log('Limpiando timeout previo');
+      clearTimeout(soundPreviewTimeout);
+      setSoundPreviewTimeout(null);
+    }
+    
+    try {
+      // Actualizar el estado de reproducción
+      setIsPlaying(true);
+      
+      console.log('Configurando modo de audio...');
+      // Configurar el modo de audio antes de reproducir
+      const audioConfig = {
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: true,
+        playThroughEarpieceAndroid: false,
+        shouldDuckAndroid: true,
+        // Usar valores numéricos directamente que son compatibles con todas las versiones
+        // 1 = INTERRUPTION_MODE_IOS_MIX_WITH_OTHERS
+        // 2 = INTERRUPTION_MODE_ANDROID_DO_NOT_MIX
+        interruptionModeIOS: 1,
+        interruptionModeAndroid: 2
+      };
+
+      console.log('🔊 Configurando audio en handleSoundPreview con:', audioConfig);
+      await Audio.setAudioModeAsync(audioConfig);
+      
+      console.log('Reproduciendo sonido...');
+      // Reproducir el nuevo sonido
+      await playSoundPreview(sound);
+      console.log(' Sonido reproducido con éxito');
+      
+      // Configurar timeout para limpiar el estado de reproducción
+      const timeout = setTimeout(() => {
+        console.log(' Restableciendo estado de reproducción');
+        setIsPlaying(false);
+        setSoundPreviewTimeout(null);
+      }, 3000);
+      
+      setSoundPreviewTimeout(timeout);
+      
+    } catch (error) {
+      console.error(' Error al reproducir el sonido:', error);
+      
+      // Restablecer el estado en caso de error
+      setIsPlaying(false);
+      setSoundPreviewTimeout(null);
+      
+      // Mostrar mensaje de error al usuario
+      Alert.alert(
+        'Error de reproducción', 
+        'No se pudo reproducir el sonido. Asegúrate de que el volumen esté encendido y que la aplicación tenga los permisos necesarios.'
+      );
+      
+      // Intentar limpiar en caso de error
+      try {
+        const audioConfig = {
+          allowsRecordingIOS: false,
+          playsInSilentModeIOS: true,
+          staysActiveInBackground: false,
+          playThroughEarpieceAndroid: false,
+          shouldDuckAndroid: false,
+          // Usar valores numéricos directamente que son compatibles con todas las versiones
+          // 1 = INTERRUPTION_MODE_IOS_MIX_WITH_OTHERS
+          // 2 = INTERRUPTION_MODE_ANDROID_DO_NOT_MIX
+          interruptionModeIOS: 1,
+          interruptionModeAndroid: 2
+        };
+
+        console.log('🔊 Configurando audio en manejo de error con:', audioConfig);
+        await Audio.setAudioModeAsync(audioConfig);
+      } catch (e) {
+        console.error('Error al configurar el modo de audio:', e);
+      }
+    }
+  };
+
+  // Manejar la selección de un sonido
+  const handleSoundSelect = (sound) => {
+    setSelectedSound(sound);
+    handleSoundPreview(sound);
+  };
+
+  // Confirmar la selección del sonido
+  const handleSoundConfirm = async () => {
+    try {
+      if (editingSoundIndex === null || !selectedSound) {
+        console.warn('No hay un sonido seleccionado o índice de alarma inválido');
+        return;
+      }
+      
+      console.log(`Confirmando selección de sonido: ${selectedSound} para alarma ${editingSoundIndex}`);
+      
+      // Detener cualquier reproducción en curso
+      if (isPlaying) {
+        setIsPlaying(false);
+        if (soundPreviewTimeout) {
+          clearTimeout(soundPreviewTimeout);
+          setSoundPreviewTimeout(null);
+        }
+      }
+      
+      // Actualizar el sonido de la alarma
+      updateAlarmSound(editingSoundIndex, selectedSound);
+      
+      // Cerrar el modal después de un breve retraso para una mejor experiencia de usuario
+      setTimeout(() => {
+        setSoundModalVisible(false);
+        // Limpiar el estado después de cerrar el modal
+        setTimeout(() => {
+          setEditingSoundIndex(null);
+          setSelectedSound('default');
+        }, 300);
+      }, 100);
+      
+    } catch (error) {
+      console.error('Error al confirmar la selección de sonido:', error);
+      Alert.alert('Error', 'No se pudo guardar la selección de sonido');
+    }
+  };
+
+  // Cancelar la selección
+  const handleSoundCancel = async () => {
+    try {
+      console.log('Cancelando selección de sonido');
+      
+      // Detener cualquier reproducción en curso
+      if (isPlaying) {
+        console.log('Deteniendo reproducción en curso...');
+        setIsPlaying(false);
+        
+        // Detener cualquier sonido que se esté reproduciendo
+        try {
+          const audioConfig = {
+            allowsRecordingIOS: false,
+            playsInSilentModeIOS: true,
+            staysActiveInBackground: false,
+            playThroughEarpieceAndroid: false,
+            shouldDuckAndroid: false,
+            // Usar valores numéricos directamente que son compatibles con todas las versiones
+            // 1 = INTERRUPTION_MODE_IOS_MIX_WITH_OTHERS
+            // 2 = INTERRUPTION_MODE_ANDROID_DO_NOT_MIX
+            interruptionModeIOS: 1,
+            interruptionModeAndroid: 2
+          };
+
+          console.log('🔊 Configurando audio en handleSoundCancel con:', audioConfig);
+          await Audio.setAudioModeAsync(audioConfig);
+          // Intentar detener cualquier sonido que esté reproduciéndose a través de expo-av
+          await Audio.Sound.stopAsync();
+        } catch (audioError) {
+          console.warn('No se pudo detener la reproducción de audio:', audioError);
+        }
+      }
+      
+      // Limpiar timeouts
+      if (soundPreviewTimeout) {
+        console.log('Limpiando timeout de vista previa');
+        clearTimeout(soundPreviewTimeout);
+        setSoundPreviewTimeout(null);
+      }
+      
+      // Cerrar el modal
+      setSoundModalVisible(false);
+      
+      // Limpiar estados después de la animación
+      setTimeout(() => {
+        setEditingSoundIndex(null);
+        setSelectedSound('default');
+        console.log('Selección de sonido cancelada');
+      }, 300);
+      
+    } catch (error) {
+      console.error('Error al cancelar la selección de sonido:', error);
+      // Asegurarse de que el modal se cierre incluso si hay un error
+      setSoundModalVisible(false);
+    }
+  };
+
+  // Opciones de sonido disponibles
+  const soundOptions = [
+    { id: 'default', label: 'Predeterminado', icon: 'notifications' },
+    { id: 'alarm', label: 'Alarma', icon: 'alarm' },
+    { id: 'tone', label: 'Tono', icon: 'music-note' },
+  ];
+
+  // Renderizar el modal de selección de sonido
+  const renderSoundPickerModal = () => {
+    if (!soundModalVisible) return null;
+
+    return (
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={soundModalVisible}
+        onRequestClose={handleSoundCancel}
+        statusBarTranslucent={true}
+      >
+        <View style={styles.soundModalOverlay}>
+          <View style={styles.soundModalContent}>
+            <View style={styles.soundModalHeader}>
+              <Text style={styles.soundModalTitle}>Seleccionar sonido</Text>
+              <Text style={styles.soundModalSubtitle}>
+                {isPlaying ? 'Reproduciendo...' : 'Toca para escuchar una vista previa'}
+              </Text>
+            </View>
+            
+            <View style={styles.soundOptionsContainer}>
+              {soundOptions.map((option) => {
+                const isSelected = selectedSound === option.id;
+                const isCurrentlyPlaying = isPlaying && isSelected;
+                
+                return (
+                  <TouchableOpacity
+                    key={option.id}
+                    style={[
+                      styles.soundOptionButton,
+                      isSelected && styles.soundOptionSelected,
+                      isPlaying && !isSelected && styles.soundOptionDisabled
+                    ]}
+                    onPress={() => handleSoundSelect(option.id)}
+                    disabled={isPlaying && !isSelected}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.soundOptionContent}>
+                      <View style={[
+                        styles.soundIconContainer,
+                        isSelected && styles.soundIconContainerSelected
+                      ]}>
+                        <MaterialIcons 
+                          name={isCurrentlyPlaying ? 'volume-up' : option.icon} 
+                          size={24} 
+                          color={isSelected ? '#fff' : '#7A2C34'} 
+                        />
+                      </View>
+                      
+                      <Text style={[
+                        styles.soundOptionText,
+                        isSelected && styles.soundOptionTextSelected
+                      ]}>
+                        {option.label}
+                      </Text>
+                      
+                      {isSelected && (
+                        <View style={styles.checkmarkContainer}>
+                          <MaterialIcons name="check" size={20} color="#7A2C34" />
+                        </View>
+                      )}
+                      
+                      {isCurrentlyPlaying && (
+                        <ActivityIndicator 
+                          size="small" 
+                          color="#7A2C34" 
+                          style={styles.playingIndicator}
+                        />
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            
+            <View style={styles.soundModalFooter}>
+              <TouchableOpacity 
+                style={[
+                  styles.modalButton, 
+                  styles.cancelButton,
+                  isPlaying && styles.disabledButton
+                ]}
+                onPress={handleSoundCancel}
+                disabled={isPlaying}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.cancelButtonText}>Cancelar</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={[
+                  styles.modalButton, 
+                  styles.confirmButton,
+                  isPlaying && styles.disabledButton
+                ]}
+                onPress={handleSoundConfirm}
+                disabled={isPlaying}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.confirmButtonText}>Aceptar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
   // Renderizar botones de navegación
   const renderNavigationButtons = () => {
-    return (
-      <>
-        {currentStep > 1 && (
-          <TouchableOpacity
-            style={styles.navButton}
-            onPress={() => setCurrentStep(currentStep - 1)}
-          >
-            <Text style={styles.navButtonText}>Atrás</Text>
-          </TouchableOpacity>
-        )}
-
-        {currentStep === 1 && (
-          <>
-            {editandoProgramacion ? (
-              <TouchableOpacity
-                style={[styles.navButton, styles.navButtonPrimary]}
-                onPress={() => setCurrentStep(2)}
-              >
-                <Text
-                  style={[styles.navButtonText, styles.navButtonTextPrimary]}
-                >
-                  Continuar
-                </Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity
-                style={[styles.navButton, styles.navButtonPrimary]}
-                onPress={() => setModalVisible(false)}
-              >
-                <Text
-                  style={[styles.navButtonText, styles.navButtonTextPrimary]}
-                >
-                  Cerrar
-                </Text>
-              </TouchableOpacity>
-            )}
-          </>
-        )}
-
-        {currentStep === 2 && (
-          <TouchableOpacity
-            style={[styles.navButton, styles.navButtonPrimary]}
-            onPress={avanzarADias}
-          >
-            <Text style={[styles.navButtonText, styles.navButtonTextPrimary]}>
-              Continuar
-            </Text>
-          </TouchableOpacity>
-        )}
-
-        {currentStep === 3 && (
-          <TouchableOpacity
-            style={[styles.navButton, styles.navButtonPrimary]}
-            onPress={avanzarAConfirmacion}
-          >
-            <Text style={[styles.navButtonText, styles.navButtonTextPrimary]}>
-              Continuar
-            </Text>
-          </TouchableOpacity>
-        )}
-
-        {currentStep === 4 && (
-          <TouchableOpacity
-            style={[styles.navButton, styles.navButtonPrimary]}
-            onPress={avanzarAConfirmacionFinal}
-          >
-            <Text style={[styles.navButtonText, styles.navButtonTextPrimary]}>
-              Continuar
-            </Text>
-          </TouchableOpacity>
-        )}
-
-        {currentStep === 5 && (
-          <TouchableOpacity
-            style={[styles.navButton, styles.navButtonPrimary]}
-            onPress={crearProgramacion}
-            disabled={!!loading}
-          >
-            {loading ? (
-              <ActivityIndicator size="small" color="#ffffff" />
-            ) : (
+    // Si estamos en el paso de configuración de alarmas, mostramos botones personalizados
+    if (currentStep === 5) {
+      return (
+        <View style={styles.navigationButtonsContainer}>
+          <View style={styles.navButtonsRow}>
+            <TouchableOpacity
+              style={[styles.navButton, {flex: 1, marginRight: 8}]}
+              onPress={volverAPasoAnterior}
+            >
+              <Text style={styles.navButtonText}>Atrás</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.navButton, styles.navButtonPrimary, {flex: 1}]}
+              onPress={avanzarAConfirmacionFinal}
+            >
               <Text style={[styles.navButtonText, styles.navButtonTextPrimary]}>
-                {editandoProgramacion
-                  ? "Actualizar tratamiento"
-                  : "Guardar tratamiento"}
+                Continuar
               </Text>
-            )}
-          </TouchableOpacity>
-        )}
-      </>
+            </TouchableOpacity>
+          </View>
+        </View>
+      );
+    }
+
+    // Para los demás pasos, mostramos la navegación estándar
+    return (
+      <View style={styles.navigationButtonsContainer}>
+        <View style={styles.navButtonsRow}>
+          {currentStep > 1 && (
+            <TouchableOpacity
+              style={[styles.navButton, {flex: 1, marginRight: 8}]}
+              onPress={() => setCurrentStep(currentStep - 1)}
+            >
+              <Text style={styles.navButtonText}>Atrás</Text>
+            </TouchableOpacity>
+          )}
+
+          {currentStep === 1 && editandoProgramacion && (
+            <TouchableOpacity
+              style={[styles.navButton, styles.navButtonPrimary, {flex: 1}]}
+              onPress={() => setCurrentStep(2)}
+            >
+              <Text style={[styles.navButtonText, styles.navButtonTextPrimary]}>
+                Continuar
+              </Text>
+            </TouchableOpacity>
+          )}
+
+{currentStep === 2 && (
+            <TouchableOpacity
+              style={[styles.navButton, styles.navButtonPrimary, {flex: 1}]}
+              onPress={avanzarADias}
+            >
+              <Text style={[styles.navButtonText, styles.navButtonTextPrimary]}>
+                Continuar
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          {currentStep === 3 && (
+            <TouchableOpacity
+              style={[styles.navButton, styles.navButtonPrimary, {flex: 1}]}
+              onPress={avanzarAConfirmacion}
+            >
+              <Text style={[styles.navButtonText, styles.navButtonTextPrimary]}>
+                Continuar
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          {currentStep === 4 && (
+            <TouchableOpacity
+              style={[styles.navButton, styles.navButtonPrimary, {flex: 1}]}
+              onPress={avanzarAConfiguracionAlarmas}
+            >
+              <Text style={[styles.navButtonText, styles.navButtonTextPrimary]}>
+                Configurar alarmas
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          {currentStep === 6 && (
+            <TouchableOpacity
+              style={[styles.navButton, styles.navButtonPrimary, {flex: 1}]}
+              onPress={crearProgramacion}
+              disabled={!!loading}
+            >
+              {loading ? (
+                <ActivityIndicator size="small" color="#ffffff" />
+              ) : (
+                <Text style={[styles.navButtonText, styles.navButtonTextPrimary]}>
+                  {editandoProgramacion
+                    ? "Actualizar tratamiento"
+                    : "Guardar tratamiento"}
+                </Text>
+              )}
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
     );
+  };
+
+  // Función para formatear la hora
+  const formatearHora = (fecha) => {
+    if (!fecha) return '';
+    const date = new Date(fecha);
+    return date.toLocaleTimeString('es-AR', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    });
   };
 
   return (
@@ -1869,7 +3022,10 @@ const Medicamentos = ({ navigation }) => {
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={onRefresh}
+            onRefresh={() => {
+              onRefresh();
+              cargarTomasHoy();
+            }}
             colors={["#7A2C34"]}
             tintColor="#7A2C34"
           />
@@ -1888,7 +3044,7 @@ const Medicamentos = ({ navigation }) => {
               </Text>
             </View>
             <View style={styles.plusIcon}>
-              <MaterialCommunityIcons name="plus" size={24} color="#fff" />
+              <MaterialIcons name="add" size={24} color="#fff" />
             </View>
           </View>
         </TouchableOpacity>
@@ -1896,9 +3052,9 @@ const Medicamentos = ({ navigation }) => {
         {/* Lista de Programaciones */}
         <View style={styles.programacionesContainer}>
           <View style={styles.programacionesHeader}>
-            <MaterialCommunityIcons
-              name="clipboard-list"
-              size={20}
+            <MaterialIcons
+              name="calendar-today"
+              size={24}
               color="#7A2C34"
             />
             <Text style={styles.programacionesTitle}>Tratamientos Activos</Text>
@@ -1932,7 +3088,7 @@ const Medicamentos = ({ navigation }) => {
             })
           ) : (
             <View style={styles.emptyContainer}>
-              <MaterialCommunityIcons name="pill" size={48} color="#ccc" />
+              <MaterialIcons name="medication" size={48} color="#ccc" />
               <Text style={styles.emptyText}>
                 No tienes tratamientos programados
               </Text>
@@ -1949,6 +3105,7 @@ const Medicamentos = ({ navigation }) => {
         animationType="slide"
         transparent={true}
         visible={modalVisible}
+        statusBarTranslucent={true}
         onRequestClose={() => setModalVisible(false)}
       >
         <View style={styles.modalOverlay}>
@@ -1957,189 +3114,79 @@ const Medicamentos = ({ navigation }) => {
 
             {/* Contenido del modal */}
             {currentStep === 1 ? (
-              <View style={styles.step1Container}>
-                {editandoProgramacion && (
-                  <View style={styles.editandoInfoContainer}>
-                    <MaterialCommunityIcons
-                      name="information"
-                      size={16}
-                      color="#7A2C34"
+              <View style={styles.stepContainer}>
+                {/* Barra de búsqueda fija en la parte superior */}
+                <View style={styles.searchContainer}>
+                  <View style={styles.searchInputContainer}>
+                    <MaterialIcons name="search" size={20} color="#7A2C34" />
+                    <TextInput
+                      style={styles.searchInput}
+                      placeholder="Buscar medicamento..."
+                      placeholderTextColor="#999"
+                      value={searchText}
+                      onChangeText={filtrarPastillas}
                     />
-                    <Text style={styles.editandoInfoText}>
-                      Editando:{" "}
-                      {editandoProgramacion.nombre_tratamiento ||
-                        editandoProgramacion.nombre_comercial}
-                    </Text>
+                    {searchText.length > 0 && (
+                      <TouchableOpacity 
+                        onPress={() => filtrarPastillas('')}
+                        style={styles.clearButton}
+                      >
+                        <MaterialIcons name="close" size={20} color="#7A2C34" />
+                      </TouchableOpacity>
+                    )}
                   </View>
-                )}
-                {editandoProgramacion ? (
-                  <View style={styles.medicamentoBloqueadoContainer}>
-                    <MaterialCommunityIcons
-                      name="pill"
-                      size={24}
-                      color="#7A2C34"
-                    />
-                    <View style={styles.medicamentoBloqueadoContent}>
-                      <Text style={styles.medicamentoBloqueadoTitle}>
-                        Medicamento seleccionado
-                      </Text>
-                      <Text style={styles.medicamentoBloqueadoValue}>
-                        {selectedPastilla?.nombre_comercial}
-                      </Text>
-                      <Text style={styles.medicamentoBloqueadoInfo}>
-                        No se puede cambiar el medicamento al editar
+                </View>
+                
+                {/* Contenedor de la lista */}
+                <View style={styles.medicamentosListContainer}>
+                  {loading ? (
+                    <View style={styles.loadingContainer}>
+                      <ActivityIndicator size="large" color="#7A2C34" />
+                      <Text style={styles.loadingText}>
+                        Cargando medicamentos...
                       </Text>
                     </View>
-                  </View>
-                ) : (
-                  <>
-                    {renderSearchBar()}
-
-                    {loading ? (
-                      <View style={styles.loadingContainer}>
-                        <ActivityIndicator size="large" color="#7A2C34" />
-                        <Text style={styles.loadingText}>
-                          Cargando pastillas...
-                        </Text>
-                      </View>
-                    ) : error ? (
-                      <View style={styles.errorContainer}>
-                        <MaterialCommunityIcons
-                          name="alert-circle"
-                          size={48}
-                          color="#ff6b6b"
-                        />
-                        <Text style={styles.errorText}>{error}</Text>
-                        <TouchableOpacity
-                          style={styles.retryButton}
-                          onPress={() => {
-                            console.log(
-                              "🔄 Reintentando carga de pastillas..."
-                            );
-                            cargarPastillas();
-                          }}
-                        >
-                          <MaterialCommunityIcons
-                            name="refresh"
-                            size={20}
-                            color="#fff"
-                          />
-                          <Text style={styles.retryButtonText}>Reintentar</Text>
-                        </TouchableOpacity>
-                      </View>
-                    ) : filteredPastillas.length === 0 ? (
-                      <View style={styles.emptyContainer}>
-                        <MaterialCommunityIcons
-                          name="pill"
-                          size={48}
-                          color="#ccc"
-                        />
-                        <Text style={styles.emptyText}>
-                          {searchText
-                            ? "No se encontraron pastillas"
-                            : "No hay pastillas registradas"}
-                        </Text>
-                        {!searchText && (
-                          <TouchableOpacity
-                            style={styles.retryButton}
-                            onPress={() => {
-                              console.log(
-                                "🔄 Recargando pastillas desde botón..."
-                              );
-                              setPastillas([]);
-                              setFilteredPastillas([]);
-                              setError(null);
-                              cargarPastillas();
-                            }}
-                          >
-                            <MaterialCommunityIcons
-                              name="refresh"
-                              size={20}
-                              color="#fff"
-                            />
-                            <Text style={styles.retryButtonText}>Recargar</Text>
-                          </TouchableOpacity>
-                        )}
-                      </View>
-                    ) : (
-                      <FlatList
-                        data={filteredPastillas}
-                        renderItem={renderPastillaItem}
-                        keyExtractor={(item) =>
-                          item.remedio_global_id?.toString() ||
-                          item.id?.toString()
-                        }
-                        showsVerticalScrollIndicator={false}
-                        style={styles.pastillasList}
-                        contentContainerStyle={styles.pastillasListContent}
+                  ) : error ? (
+                    <View style={styles.errorContainer}>
+                      <MaterialIcons
+                        name="warning"
+                        size={48}
+                        color="#ff6b6b"
                       />
-                    )}
-                  </>
-                )}
-
-                {loading ? (
-                  <View style={styles.loadingContainer}>
-                    <ActivityIndicator size="large" color="#7A2C34" />
-                    <Text style={styles.loadingText}>
-                      Cargando pastillas...
-                    </Text>
-                  </View>
-                ) : error ? (
-                  <View style={styles.errorContainer}>
-                    <MaterialCommunityIcons
-                      name="alert-circle"
-                      size={48}
-                      color="#ff6b6b"
-                    />
-                    <Text style={styles.errorText}>{error}</Text>
-                    <TouchableOpacity
-                      style={styles.retryButton}
-                      onPress={() => {
-                        console.log("🔄 Reintentando carga de pastillas...");
-                        cargarPastillas();
-                      }}
-                    >
-                      <MaterialCommunityIcons
-                        name="refresh"
-                        size={20}
-                        color="#fff"
-                      />
-                      <Text style={styles.retryButtonText}>Reintentar</Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : filteredPastillas.length === 0 ? (
-                  <View style={styles.emptyContainer}>
-                    <MaterialCommunityIcons
-                      name="pill"
-                      size={48}
-                      color="#ccc"
-                    />
-                    <Text style={styles.emptyText}>
-                      {searchText
-                        ? "No se encontraron pastillas"
-                        : "No hay pastillas registradas"}
-                    </Text>
-                    {!searchText && (
+                      <Text style={styles.errorText}>{error}</Text>
                       <TouchableOpacity
                         style={styles.retryButton}
                         onPress={() => {
-                          console.log("🔄 Recargando pastillas desde botón...");
-                          setPastillas([]);
-                          setFilteredPastillas([]);
-                          setError(null);
+                          console.log("🔄 Reintentando carga de medicamentos...");
                           cargarPastillas();
                         }}
                       >
-                        <MaterialCommunityIcons
+                        <MaterialIcons
                           name="refresh"
                           size={20}
                           color="#fff"
                         />
-                        <Text style={styles.retryButtonText}>Recargar</Text>
+                        <Text style={styles.retryButtonText}>Reintentar</Text>
                       </TouchableOpacity>
-                    )}
-                  </View>
-                ) : null}
+                    </View>
+                  ) : (
+                    <FlatList
+                      style={{ flex: 1 }}
+                      contentContainerStyle={styles.listContainer}
+                      data={filteredPastillas}
+                      keyExtractor={(item) => item.remedio_global_id?.toString() || Math.random().toString()}
+                      renderItem={renderPastillaItem}
+                      ListEmptyComponent={renderEmptyComponent}
+                      keyboardShouldPersistTaps="handled"
+                      removeClippedSubviews={false}
+                      showsVerticalScrollIndicator={true}
+                      ListFooterComponent={<View style={{ height: 20 }} />}
+                      contentInset={{ bottom: 20 }}
+                      contentInsetAdjustmentBehavior="automatic"
+                      keyboardDismissMode="on-drag"
+                    />
+                  )}
+                </View>
               </View>
             ) : (
               <ScrollView
@@ -2151,8 +3198,8 @@ const Medicamentos = ({ navigation }) => {
                   <View style={styles.step2Container}>
                     {/* Header del paso 2 */}
                     <View style={styles.step2Header}>
-                      <MaterialCommunityIcons
-                        name={editandoProgramacion ? "pencil" : "pencil"}
+                      <MaterialIcons
+                        name="edit"
                         size={24}
                         color="#7A2C34"
                       />
@@ -2171,7 +3218,7 @@ const Medicamentos = ({ navigation }) => {
                       {/* Corregido: props sueltos eliminados */}
                        {/* Header con información del medicamento */}
                       <View style={styles.stepHeader}>
-                        <MaterialCommunityIcons name="pill" size={24} color="#7A2C34" />
+                        <MaterialIcons name="medication" size={24} color="#7A2C34" />
                         <View style={styles.stepHeaderContent}>
                           <Text style={styles.stepHeaderTitle}>Medicamento seleccionado</Text>
                           <Text style={styles.stepHeaderSubtitle}>
@@ -2227,8 +3274,8 @@ const Medicamentos = ({ navigation }) => {
                               )
                             : "Seleccionar fecha de finalización"}
                         </Text>
-                        <MaterialCommunityIcons
-                          name="calendar"
+                        <MaterialIcons
+                          name="event"
                           size={20}
                           color="#7A2C34"
                         />
@@ -2237,8 +3284,8 @@ const Medicamentos = ({ navigation }) => {
 
                     {/* Información adicional */}
                     <View style={styles.infoContainer}>
-                      <MaterialCommunityIcons
-                        name="information"
+                      <MaterialIcons
+                        name="info"
                         size={16}
                         color="#666"
                       />
@@ -2252,7 +3299,8 @@ const Medicamentos = ({ navigation }) => {
 
                 {currentStep === 3 && renderDias()}
                 {currentStep === 4 && renderHorarios()}
-                {currentStep === 5 && renderConfirmacion()}
+                {currentStep === 5 && renderAlarmConfig()}
+                {currentStep === 6 && renderConfirmacion()}
               </ScrollView>
             )}
 
@@ -2310,10 +3358,14 @@ const Medicamentos = ({ navigation }) => {
       {/* Modal de detalles de pastilla */}
       {renderModalDetalles()}
       {renderDetallesProgramacion()}
+      
+      {/* Renderizar el modal de selección de sonido */}
+      {renderSoundPickerModal()}
     </SafeAreaView>
   );
 };
 
+// Estilos importados desde medicamentos.styles.js
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -2378,8 +3430,11 @@ const styles = StyleSheet.create({
   modalContent: {
     backgroundColor: "#fff",
     borderRadius: 20,
-    width: "95%",
+    width: "100%",
     height: "90%",
+    maxHeight: "90%",
+    paddingTop: 20,
+    paddingHorizontal: 0,
     shadowColor: "#000",
     shadowOffset: {
       width: 0,
@@ -2492,51 +3547,173 @@ const styles = StyleSheet.create({
   pastillasListContent: {
     paddingBottom: 100, // Espacio para los botones de navegación
   },
+  tablaRow: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderColor: '#e0e0e0',
+    backgroundColor: '#fff',
+  },
+  tablaRowFirst: {
+    borderTopWidth: 1,
+    borderTopLeftRadius: 8,
+    borderTopRightRadius: 8,
+  },
+  tablaRowLast: {
+    borderBottomLeftRadius: 8,
+    borderBottomRightRadius: 8,
+  },
+  tablaCell: {
+    flex: 1,
+    padding: 12,
+    justifyContent: 'center',
+    borderRightWidth: 1,
+    borderRightColor: '#e0e0e0',
+  },
+  tablaCellText: {
+    fontSize: 16,
+    color: '#5C1A1F',
+    textAlign: 'center',
+    fontWeight: '600',
+  },
+  diaText: {
+    fontSize: 16,
+    color: '#5C1A1F',
+    fontWeight: '600',
+    backgroundColor: '#F0E6E7',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 14,
+    overflow: 'hidden',
+    minWidth: 100,
+    textAlign: 'center',
+  },
+  horarioText: {
+    color: '#7A2C34',
+    fontWeight: 'bold',
+    backgroundColor: '#F7DAD9',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    overflow: 'hidden',
+    fontSize: 16,
+    textAlign: 'center',
+    minWidth: 80,
+    alignSelf: 'center',
+  },
+  tablaHeader: {
+    flexDirection: 'row',
+    backgroundColor: '#F7DAD9',
+    borderTopLeftRadius: 8,
+    borderTopRightRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderBottomWidth: 0,
+  },
+  tablaHeaderCell: {
+    flex: 1,
+    padding: 12,
+    justifyContent: 'center',
+    borderRightWidth: 1,
+    borderRightColor: '#e0e0e0',
+  },
+  tablaHeaderText: {
+    fontSize: 16,
+    color: '#7A2C34',
+    textAlign: 'center',
+    fontFamily: 'System',
+    fontWeight: 'bold',
+  },
   pastillaItem: {
-    backgroundColor: "#fff",
-    padding: 15,
-    marginVertical: 5,
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    padding: 16,
+    marginVertical: 6,
     marginHorizontal: 10,
-    borderRadius: 15,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 3.84,
-    elevation: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
+    borderWidth: 1,
+    borderColor: '#f0f0f0',
+  },
+  pastillaItemDisabled: {
+    backgroundColor: '#f9f9f9',
+    opacity: 0.7,
   },
   pastillaInfo: {
     flex: 1,
+    marginRight: 12,
+  },
+  pastillaHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
   },
   pastillaNombre: {
     fontSize: 16,
-    fontWeight: "bold",
-    color: "#333",
-    marginBottom: 5,
+    fontWeight: '600',
+    color: '#1a1a1a',
+    flexShrink: 1,
+    marginRight: 8,
+  },
+  pastillaTipo: {
+    backgroundColor: '#f0f7ff',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    marginLeft: 'auto',
+  },
+  pastillaTipoText: {
+    color: '#1a73e8',
+    fontSize: 11,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   pastillaDescripcion: {
-    fontSize: 14,
-    color: "#666",
-    marginBottom: 3,
+    fontSize: 13.5,
+    color: '#4a5568',
+    lineHeight: 20,
+    marginBottom: 8,
   },
   pastillaDetails: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    marginTop: 4,
+    gap: 6,
   },
   pastillaPresentacion: {
-    fontSize: 12,
-    color: "#888",
-    marginBottom: 3,
+    fontSize: 12.5,
+    color: '#4a5568',
+    backgroundColor: '#f0f4f8',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    overflow: 'hidden',
   },
   pastillaPeso: {
-    fontSize: 12,
-    color: "#888",
+    fontSize: 12.5,
+    color: '#2b6cb0',
+    backgroundColor: '#ebf8ff',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    fontWeight: '500',
+  },
+  longPressHint: {
+    fontSize: 11,
+    color: '#a0aec0',
+    marginTop: 8,
+    fontStyle: 'italic',
+  },
+  pastillaArrow: {
+    opacity: 0.7,
   },
   loadingContainer: {
     flex: 1,
@@ -2562,6 +3739,8 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
+    padding: 20,
+    marginTop: 20,
     paddingVertical: 40,
   },
   emptyText: {
@@ -2569,6 +3748,24 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#666",
     textAlign: "center",
+    marginBottom: 20,
+  },
+  emptyIcon: {
+    marginBottom: 10,
+  },
+  retryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#7A2C34',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    marginTop: 10,
+  },
+  retryButtonText: {
+    color: '#fff',
+    marginLeft: 8,
+    fontWeight: '600',
   },
   emptySubtext: {
     marginTop: 8,
@@ -2577,27 +3774,57 @@ const styles = StyleSheet.create({
     textAlign: "center",
     paddingHorizontal: 20,
   },
-  // Estilos para el modal de detalles
-  modalDetallesContent: {
-    backgroundColor: '#fff',
-    borderRadius: 20,
-    width: '90%',
-    maxHeight: '80%',
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
+  // Estilos para el modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
   },
-  modalDetallesHeader: {
+  modalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    height: '90%',
+    width: '100%',
+    flexDirection: 'column',
+    overflow: 'hidden',
+    // Asegurar que el modal esté por encima de otros elementos
+    elevation: 5,
+    zIndex: 1000,
+  },
+  modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
+    padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#e9ecef',
-    backgroundColor: '#f8f9fa',
+    borderBottomColor: '#e2e8f0',
+  },
+  stepContainer: {
+    flex: 1,
+    backgroundColor: '#fff',
+    width: '100%',
+    flexDirection: 'column',
+    overflow: 'hidden',
+    // Asegurar que el contenedor ocupe todo el espacio disponible
+    minHeight: '100%',
+  },
+  medicamentosListContainer: {
+    flex: 1,
+    backgroundColor: '#fff',
+    width: '100%',
+    overflow: 'hidden',
+    // Asegurar que el contenedor de la lista ocupe todo el espacio restante
+    flexGrow: 1,
+  },
+  listContainer: {
+    flexGrow: 1,
+    padding: 12,
+    paddingBottom: 24,
+    // Asegurar que el contenedor de la lista pueda crecer según sea necesario
+    minHeight: '100%',
+    // Asegurar que el contenido se muestre correctamente
+    justifyContent: 'flex-start',
   },
   modalDetallesHeaderContent: {
     flexDirection: 'row',
@@ -2678,21 +3905,23 @@ const styles = StyleSheet.create({
   
   // Estilos para los botones de navegación
   navigationButtonsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     padding: 16,
     backgroundColor: '#fff',
     borderTopWidth: 1,
-    borderTopColor: '#f0f0f0',
+    borderTopColor: '#e2e8f0',
+    marginTop: 'auto',
+  },
+  navButtonsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
   },
   navButton: {
     flex: 1,
     paddingVertical: 14,
     borderRadius: 8,
     alignItems: 'center',
-    justifyContent: 'center',
     backgroundColor: '#4a5568', // Gris oscuro para el botón Atrás
-    marginHorizontal: 4,
   },
   navButtonPrimary: {
     backgroundColor: '#7A2C34', // Color bordo para el botón Continuar
@@ -2704,6 +3933,123 @@ const styles = StyleSheet.create({
   },
   navButtonTextPrimary: {
     color: '#fff',
+  },
+
+  // Estilos para la barra de búsqueda
+  searchContainer: {
+    width: '100%',
+    padding: 12,
+    paddingBottom: 8,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+    // Asegurar que la barra de búsqueda esté por encima de la lista
+    zIndex: 2,
+    // Evitar que la barra de búsqueda se encoja
+    flexShrink: 0,
+  },
+  searchInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f5f5f5',
+    borderRadius: 25,
+    paddingHorizontal: 16,
+    height: 48,
+    width: '100%',
+  },
+  searchInput: {
+    flex: 1,
+    height: '100%',
+    marginLeft: 8,
+    color: '#2d3748',
+    fontSize: 15,
+  },
+  clearButton: {
+    padding: 4,
+    marginLeft: 4,
+  },
+  // Contenedor principal de la lista de medicamentos
+  medicamentosListContainer: {
+    flex: 1,
+    backgroundColor: '#fff',
+    width: '100%',
+  },
+  // Contenedor de los items de la lista
+  listContainer: {
+    flexGrow: 1,
+    padding: 12,
+    paddingBottom: 24,
+  },
+  pastillaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  pastillaInfo: {
+    flex: 1,
+    marginRight: 12,
+  },
+  pastillaNombre: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#2d3748',
+    marginBottom: 4,
+  },
+  pastillaDescripcion: {
+    fontSize: 14,
+    color: '#718096',
+    marginBottom: 6,
+  },
+  pastillaDetails: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 6,
+    flexWrap: 'wrap',
+  },
+  pastillaPresentacion: {
+    fontSize: 13,
+    color: '#4a5568',
+    backgroundColor: '#edf2f7',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  pastillaPeso: {
+    fontSize: 13,
+    color: '#4a5568',
+  },
+  longPressHint: {
+    fontSize: 11,
+    color: '#a0aec0',
+    marginTop: 4,
+    fontStyle: 'italic',
+  },
+  
+  // Contenedor principal de la lista de medicamentos
+  medicamentosListContainer: {
+    flex: 1,
+    width: '100%',
+    backgroundColor: '#f8f9fa',
+  },
+  
+  sectionHeader: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#4a5568',
+    padding: 12,
+    backgroundColor: '#f8f9fa',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+    marginBottom: 8,
   },
 
   // Estilos para configuración
@@ -2783,79 +4129,78 @@ const styles = StyleSheet.create({
   },
   
   // ====================================
+  // Estilos para configuración
+  configuracionContainer: {
+    flex: 1,
+    padding: 24, // Añadido padding para consistencia con el paso 2
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    margin: 16,
+    shadowColor: 'rgba(0, 0, 0, 0.08)',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 1,
+    shadowRadius: 16,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 0, 0, 0.04)',
+  },
 
-// Estilos para configuración
-configuracionContainer: {
-flex: 1,
-padding: 24, // Añadido padding para consistencia con el paso 2
-backgroundColor: '#fff',
-borderRadius: 16,
-margin: 16,
-shadowColor: 'rgba(0, 0, 0, 0.08)',
-shadowOffset: { width: 0, height: 4 },
-shadowOpacity: 1,
-shadowRadius: 16,
-elevation: 3,
-borderWidth: 1,
-borderColor: 'rgba(0, 0, 0, 0.04)',
-},
+  // Estilos para la sección de días seleccionados
+  inputContainer: {
+    marginBottom: 24,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    shadowColor: 'rgba(0, 0, 0, 0.05)',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  inputLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#7A2C34',
+    marginBottom: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  diasSeleccionadosText: {
+    fontSize: 16,
+    color: '#2d3748',
+    lineHeight: 24,
+    backgroundColor: '#f8f9fa',
+    padding: 14,
+    borderRadius: 10,
+    borderLeftWidth: 4,
+    borderLeftColor: '#7A2C34',
+    fontFamily: 'System',
+    fontWeight: '500',
+  },
 
-// Estilos para la sección de días seleccionados
-inputContainer: {
-marginBottom: 24,
-backgroundColor: '#fff',
-borderRadius: 12,
-padding: 18,
-borderWidth: 1,
-borderColor: '#e2e8f0',
-shadowColor: 'rgba(0, 0, 0, 0.05)',
-shadowOffset: { width: 0, height: 2 },
-shadowOpacity: 1,
-shadowRadius: 6,
-elevation: 2,
-},
-inputLabel: {
-fontSize: 15,
-fontWeight: '700',
-color: '#7A2C34',
-marginBottom: 12,
-textTransform: 'uppercase',
-letterSpacing: 0.5,
-},
-diasSeleccionadosText: {
-fontSize: 16,
-color: '#2d3748',
-lineHeight: 24,
-backgroundColor: '#f8f9fa',
-padding: 14,
-borderRadius: 10,
-borderLeftWidth: 4,
-borderLeftColor: '#7A2C34',
-fontFamily: 'System',
-fontWeight: '500',
-},
-
-// Estilos para la sección de horarios
-horariosContainer: {
-marginBottom: 24,
-},
-horariosTitleContainer: {
-flexDirection: 'row',
-alignItems: 'center',
-marginBottom: 12,
-},
-horariosTitle: {
-fontSize: 18,
-fontWeight: '600',
-color: '#2d3748',
-marginLeft: 8,
-},
-horariosSubtitle: {
-fontSize: 14,
-color: '#718096',
-marginBottom: 16,
-lineHeight: 20,
-},
+  // Estilos para la sección de horarios
+  horariosContainer: {
+    marginBottom: 24,
+  },
+  horariosTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  horariosTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#2d3748',
+    marginLeft: 8,
+  },
+  horariosSubtitle: {
+    fontSize: 14,
+    color: '#718096',
+    marginBottom: 16,
+    lineHeight: 20,
+  },
 
 // ====================================
 
@@ -3358,7 +4703,62 @@ marginBottom: 2,
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  // Estilos para el contenedor del paso
+  stepContainer: {
+    marginTop: 32,
+    width: '100%',
+    marginBottom: 16,
+    paddingHorizontal: 16, // Add horizontal padding
+  },
+  stepHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    padding: 12,
+    backgroundColor: '#F8F9FA',
+    borderRadius: 8,
+    marginHorizontal: 16, // Add horizontal margin to match the container
+  },
+  stepHeaderContent: {
+    marginLeft: 12,
+  },
+  stepHeaderTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#5C1A1F',
+  },
+  stepHeaderSubtitle: {
+    fontSize: 14,
+    color: '#7A2C34',
+    fontWeight: '700',
+  },
+  infoCard: {
+    backgroundColor: '#FFF',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    marginHorizontal: 16, // Add horizontal margin to match the container
+    borderWidth: 1,
+    borderColor: '#E9ECEF',
+  },
+  infoCardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  infoCardLabel: {
+    fontSize: 14,
+    color: '#6C757D',
     marginLeft: 8,
+    marginRight: 8,
+    minWidth: 130,
+  },
+  infoCardValue: {
+    fontSize: 14,
+    color: '#212529',
+    fontWeight: '500',
+    flex: 1,
   },
   stepHeader: {
     flexDirection: "row",
@@ -3763,6 +5163,176 @@ marginBottom: 2,
     fontStyle: "italic",
     textAlign: "center",
     paddingVertical: 20,
+  },
+  // Estilos para el paso de configuración de alarmas
+  stepHeader: {
+    marginBottom: 24,
+    paddingHorizontal: 8,
+  },
+  stepTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#2C3E50',
+    marginBottom: 8,
+  },
+  stepSubtitle: {
+    fontSize: 14,
+    color: '#7F8C8D',
+    lineHeight: 20,
+  },
+  alarmsContainer: {
+    flex: 1,
+  },
+  alarmItem: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 0,
+    marginBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: '#EDEFF2',
+    overflow: 'hidden',
+  },
+  alarmContent: {
+    flex: 1,
+    padding: 16,
+  },
+  alarmTimeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  soundIndicator: {
+    marginLeft: 8,
+    opacity: 0.8,
+  },
+  alarmItemDisabled: {
+    opacity: 0.6,
+  },
+  alarmTimeContainer: {
+    flex: 1,
+  },
+  alarmTime: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#2C3E50',
+    marginBottom: 4,
+  },
+  alarmDias: {
+    fontSize: 13,
+    color: '#7F8C8D',
+  },
+  noAlarmsContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 40,
+  },
+  noAlarmsText: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#2C3E50',
+    marginTop: 16,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  noAlarmsSubtext: {
+    fontSize: 14,
+    color: '#7F8C8D',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  emptyText: {
+    fontSize: 16,
+    color: "#6C757D",
+    textAlign: "center",
+    marginTop: 10,
+  },
+  // Estilos para la sección de tomas de hoy
+  tomasHoyContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    padding: 15,
+    margin: 15,
+    marginBottom: 20,
+    elevation: 2,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 1.41,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#343A40',
+    marginLeft: 10,
+  },
+  tomasList: {
+    marginTop: 10,
+  },
+  tomaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8F9FA',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 10,
+  },
+  tomaHoraContainer: {
+    backgroundColor: '#7A2C34',
+    borderRadius: 6,
+    padding: 8,
+    marginRight: 12,
+    minWidth: 80,
+    alignItems: 'center',
+  },
+  tomaHora: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  tomaInfo: {
+    flex: 1,
+  },
+  tomaNombre: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#343A40',
+    marginBottom: 4,
+  },
+  tomaDescripcion: {
+    fontSize: 14,
+    color: '#6C757D',
+  },
+  tomasTitulo: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#343A40',
+    marginBottom: 10,
+  },
+  tomaHora: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#7A2C34',
+  },
+  tomaInfo: {
+    flex: 1,
+  },
+  tomaNombre: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#343A40',
+    marginBottom: 2,
+  },
+  tomaDescripcion: {
+    fontSize: 13,
+    color: '#6C757D',
   },
   // Estilos para resumen de días en la tarjeta de programación
   diasResumenContainer: {
@@ -4294,8 +5864,9 @@ marginBottom: 2,
   actionButtonText: {
     color: "#fff",
     fontSize: 14,
-    fontWeight: "bold",
-  },
+    fontWeight: "bold"
+  }
 });
 
+// End of component
 export default Medicamentos;

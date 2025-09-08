@@ -4,16 +4,16 @@
 // Para desarrollo local con XAMPP en la misma máquina
 export const DEV_CONFIG = {
   // Opción 1: localhost (para desarrollo en la misma máquina)
-  LOCALHOST: "http://localhost/smart_pill/smart_pill_api/",
+  LOCALHOST: "http://localhost/smart_pill/",
 
   // Opción 2: IP específica (para dispositivo físico en la misma red)
-  IP_SPECIFIC: "http://192.168.0.125/smart_pill/smart_pill_api/",
+  IP_SPECIFIC: "http://192.168.0.125/smart_pill/",
 
   // Opción 3: Para emulador Android (10.0.2.2 apunta a localhost del host)
-  ANDROID_EMULATOR: "http://10.0.2.2/smart_pill/smart_pill_api/",
+  ANDROID_EMULATOR: "http://10.0.2.2/smart_pill/",
 
   // Opción 4: Para emulador iOS (localhost funciona directamente)
-  IOS_EMULATOR: "http://localhost/smart_pill/smart_pill_api/",
+  IOS_EMULATOR: "http://localhost/smart_pill/",
 };
 
 // Función para obtener la URL correcta según el entorno
