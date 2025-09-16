@@ -26,7 +26,8 @@
         }
       ],
       "expo-audio",
-      "expo-video"
+      "expo-video",
+      "expo-font"
     ],
     "splash": {
       "image": "./assets/splash-icon.png",
@@ -38,8 +39,7 @@
       "bundleIdentifier": "com.yourcompany.smartpill",
       "infoPlist": {
         "UIBackgroundModes": [
-          "audio",
-          "remote-notification"
+          "audio"
         ]
       }
     },

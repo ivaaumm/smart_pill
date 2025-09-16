@@ -36,8 +36,10 @@ export default function Home() {
       console.log("📊 Usuario ID:", user.usuario_id);
       console.log("📋 Datos de programaciones:", response.data);
 
-      if (response.success && response.data.success) {
-        const programacionesData = response.data.data || [];
+      if (response.success) {
+        // El API devuelve {data: [...], estadisticas_generales: {...}}
+        // Necesitamos acceder a response.data.data para obtener el array
+        const programacionesData = response.data?.data || [];
         console.log("📊 Programaciones a guardar:", programacionesData);
         console.log("📊 Es array:", Array.isArray(programacionesData));
 
@@ -62,7 +64,7 @@ export default function Home() {
           setProgramaciones([]);
         }
       } else {
-        setError(response.data?.error || "Error al cargar programaciones");
+        setError(response.error || "Error al cargar programaciones");
         setProgramaciones([]); // Establecer array vacío en caso de error
       }
     } catch (error) {
@@ -105,22 +107,10 @@ export default function Home() {
     return hora.substring(0, 5); // Formato HH:MM
   };
 
-  const obtenerDiasTexto = (dias) => {
-    if (!dias || !Array.isArray(dias)) {
-      console.log("⚠️ dias no es un array válido:", dias);
-      return "Sin días";
-    }
-
-    const diasMap = {
-      lunes: "Lun",
-      martes: "Mar",
-      miercoles: "Mié",
-      jueves: "Jue",
-      viernes: "Vie",
-      sabado: "Sáb",
-      domingo: "Dom",
-    };
-    return dias.map((dia) => diasMap[dia] || dia).join(", ");
+  // Función para capitalizar la primera letra de un día
+  const capitalizarDia = (dia) => {
+    if (!dia) return "Sin día";
+    return dia.charAt(0).toUpperCase() + dia.slice(1);
   };
 
   // Función para obtener las tomas del día actual y mañana
@@ -318,72 +308,12 @@ export default function Home() {
     );
   };
 
-  const renderProgramacion = (programacion) => (
-    <View key={programacion.programacion_id} style={styles.programacionCard}>
-      <View style={styles.programacionHeader}>
-        <MaterialIcons name="medication" size={24} color="#7A2C34" />
-        <View style={styles.programacionInfo}>
-          <Text style={styles.programacionNombre}>
-            {programacion.nombre_tratamiento || programacion.nombre_comercial}
-          </Text>
-          <Text style={styles.programacionMedicamento}>
-            {programacion.nombre_comercial}
-          </Text>
-        </View>
-      </View>
 
-      <View style={styles.programacionDetalles}>
-        <View style={styles.detalleItem}>
-          <MaterialIcons
-            name="event"
-            size={16}
-            color="#666"
-          />
-          <Text style={styles.detalleText}>
-            {formatearFecha(programacion.fecha_inicio)} -{" "}
-            {formatearFecha(programacion.fecha_fin)}
-          </Text>
-        </View>
-
-        {programacion.horarios &&
-          Array.isArray(programacion.horarios) &&
-          programacion.horarios.length > 0 && (
-            <View style={styles.horariosContainer}>
-              <Text style={styles.horariosTitle}>Horarios:</Text>
-              {programacion.horarios.map((horario, index) => {
-                console.log("🔍 Horario:", horario);
-                console.log("🔍 Horario.dias:", horario?.dias);
-                return (
-                  <View key={index} style={styles.horarioItem}>
-                    <MaterialIcons
-                      name="access-time"
-                      size={14}
-                      color="#666"
-                    />
-                    <Text style={styles.horarioText}>
-                      {formatearHora(horario.hora || "00:00")} -{" "}
-                      {obtenerDiasTexto(horario.dias)}
-                    </Text>
-                  </View>
-                );
-              })}
-            </View>
-          )}
-
-        {programacion.observaciones && (
-          <View style={styles.detalleItem}>
-            <MaterialIcons name="notes" size={16} color="#666" />
-            <Text style={styles.detalleText}>{programacion.observaciones}</Text>
-          </View>
-        )}
-      </View>
-    </View>
-  );
 
   return (
     <SafeAreaView style={styles.container} edges={["bottom", "left", "right"]}>
       <View style={styles.header}>
-        <Text style={styles.title}>Mis Tratamientos</Text>
+        <Text style={styles.title}>Tus Tratamientos</Text>
         <Text style={styles.subtitle}>
           {user?.nombre ? `Hola, ${user.nombre}` : "Bienvenido a Smart Pill"}
         </Text>
@@ -430,6 +360,9 @@ export default function Home() {
           <>
             {/* Tomas del día */}
             {renderTomasDelDia()}
+            
+
+
           </>
         )}
       </ScrollView>
@@ -518,75 +451,7 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 24,
   },
-  programacionesContainer: {
-    paddingVertical: 20,
-  },
-  programacionCard: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 3.84,
-    elevation: 5,
-  },
-  programacionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  programacionInfo: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  programacionNombre: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#333",
-    marginBottom: 2,
-  },
-  programacionMedicamento: {
-    fontSize: 14,
-    color: "#666",
-  },
-  estadoBadge: {
-    backgroundColor: "#e8f5e8",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  estadoText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#2e7d32",
-  },
-  programacionDetalles: {
-    gap: 8,
-  },
-  detalleItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  detalleText: {
-    fontSize: 14,
-    color: "#666",
-    flex: 1,
-  },
-  horariosContainer: {
-    marginTop: 4,
-  },
-  horariosTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#333",
-    marginBottom: 6,
-  },
+
   horarioItem: {
     flexDirection: "row",
     alignItems: "center",
@@ -699,4 +564,5 @@ const styles = StyleSheet.create({
     color: "#7A2C34",
     fontWeight: "500",
   },
+
 });

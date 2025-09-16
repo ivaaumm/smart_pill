@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: 127.0.0.1
--- Tiempo de generación: 02-09-2025 a las 13:54:49
+-- Tiempo de generación: 12-09-2025 a las 20:04:38
 -- Versión del servidor: 10.4.32-MariaDB
 -- Versión de PHP: 8.2.12
 
@@ -29,15 +29,15 @@ SET time_zone = "+00:00";
 
 CREATE TABLE `alarmas` (
   `alarma_id` int(11) NOT NULL,
-  `usuario_id` int(11) DEFAULT NULL,
-  `nombre_alarma` varchar(100) DEFAULT NULL,
-  `hora_inicio` time DEFAULT NULL,
-  `fecha_inicio` date DEFAULT NULL,
-  `repeticion_tipo` varchar(50) DEFAULT NULL,
-  `repeticion_intervalo` int(11) DEFAULT NULL,
-  `dias_semana` varchar(50) DEFAULT NULL,
-  `fecha_fin` date DEFAULT NULL,
-  `activo` tinyint(1) DEFAULT NULL
+  `programacion_id` int(11) NOT NULL,
+  `horario_id` int(11) DEFAULT NULL,
+  `hora` time NOT NULL,
+  `dias_semana` varchar(20) NOT NULL COMMENT 'Comma-separated day numbers (1=Lunes, 7=Domingo)',
+  `activa` tinyint(1) DEFAULT 1,
+  `sonido` varchar(100) DEFAULT 'default',
+  `vibrar` tinyint(1) DEFAULT 1,
+  `fecha_creacion` timestamp NOT NULL DEFAULT current_timestamp(),
+  `fecha_actualizacion` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_spanish2_ci;
 
 -- --------------------------------------------------------
@@ -74,17 +74,13 @@ CREATE TABLE `horarios_tratamiento` (
 --
 
 INSERT INTO `horarios_tratamiento` (`horario_id`, `tratamiento_id`, `usuario_id`, `remedio_global_id`, `dia_semana`, `hora`, `dosis`, `activo`, `fecha_creacion`) VALUES
-(8, 10, 1, 65, 'viernes', '00:19:00', '1', 1, '2025-09-02 03:49:05'),
-(9, 10, 1, 65, 'sabado', '00:19:00', '1', 1, '2025-09-02 03:49:05'),
-(10, 10, 1, 65, 'jueves', '00:19:00', '1', 1, '2025-09-02 03:49:05'),
-(11, 10, 1, 65, 'martes', '00:19:00', '1', 1, '2025-09-02 03:49:05'),
-(12, 10, 1, 65, 'viernes', '00:39:00', '1', 1, '2025-09-02 03:49:05'),
-(13, 10, 1, 65, 'sabado', '00:39:00', '1', 1, '2025-09-02 03:49:05'),
-(14, 10, 1, 65, 'jueves', '00:39:00', '1', 1, '2025-09-02 03:49:05'),
-(15, 10, 1, 65, 'martes', '00:39:00', '1', 1, '2025-09-02 03:49:05'),
-(16, 11, 1, 17, 'viernes', '00:51:00', '1', 1, '2025-09-02 03:51:12'),
-(17, 12, 1, 17, 'martes', '00:51:00', '1', 1, '2025-09-02 03:51:59'),
-(18, 13, 1, 17, 'martes', '00:54:00', '1', 1, '2025-09-02 03:54:14');
+(154, 26, 1, 17, 'sabado', '15:05:00', '1', 1, '2025-09-12 18:01:41'),
+(155, 26, 1, 17, 'domingo', '15:05:00', '1', 1, '2025-09-12 18:01:41'),
+(156, 26, 1, 17, 'viernes', '15:05:00', '1', 1, '2025-09-12 18:01:41'),
+(157, 26, 1, 17, 'miercoles', '15:05:00', '1', 1, '2025-09-12 18:01:41'),
+(158, 26, 1, 17, 'martes', '15:05:00', '1', 1, '2025-09-12 18:01:41'),
+(159, 26, 1, 17, 'lunes', '15:05:00', '1', 1, '2025-09-12 18:01:41'),
+(160, 26, 1, 17, 'jueves', '15:05:00', '1', 1, '2025-09-12 18:01:41');
 
 -- --------------------------------------------------------
 
@@ -133,18 +129,16 @@ CREATE TABLE `programacion_tratamientos` (
   `observaciones` text DEFAULT NULL,
   `estado` enum('activo','pausado','completado','cancelado') DEFAULT 'activo',
   `fecha_creacion` timestamp NOT NULL DEFAULT current_timestamp(),
-  `fecha_actualizacion` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+  `fecha_actualizacion` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `tiene_alarmas` tinyint(1) DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_spanish2_ci;
 
 --
 -- Volcado de datos para la tabla `programacion_tratamientos`
 --
 
-INSERT INTO `programacion_tratamientos` (`programacion_id`, `usuario_id`, `remedio_global_id`, `nombre_tratamiento`, `fecha_inicio`, `fecha_fin`, `dosis_por_toma`, `observaciones`, `estado`, `fecha_creacion`, `fecha_actualizacion`) VALUES
-(10, 1, 65, 'Albendazol', '2025-09-02', '2025-10-02', '1 tableta', NULL, 'activo', '2025-09-02 03:49:05', '2025-09-02 03:49:05'),
-(11, 1, 17, 'Aciclovir', '2025-09-02', '2025-10-02', '1 tableta', NULL, 'activo', '2025-09-02 03:51:12', '2025-09-02 03:51:12'),
-(12, 1, 17, 'Aciclovir', '2025-09-02', '2025-10-02', '1 tableta', NULL, 'activo', '2025-09-02 03:51:59', '2025-09-02 03:51:59'),
-(13, 1, 17, 'Aciclovir', '2025-09-02', '2025-10-02', '1 tableta', NULL, 'activo', '2025-09-02 03:54:14', '2025-09-02 03:55:42');
+INSERT INTO `programacion_tratamientos` (`programacion_id`, `usuario_id`, `remedio_global_id`, `nombre_tratamiento`, `fecha_inicio`, `fecha_fin`, `dosis_por_toma`, `observaciones`, `estado`, `fecha_creacion`, `fecha_actualizacion`, `tiene_alarmas`) VALUES
+(26, 1, 17, 'Aciclovir', '2025-09-12', '2025-10-12', '1 tableta', NULL, 'activo', '2025-09-12 18:01:41', '2025-09-12 18:01:41', 0);
 
 -- --------------------------------------------------------
 
@@ -372,7 +366,11 @@ INSERT INTO `usuarios` (`usuario_id`, `nombre_usuario`, `contrasena_hash`, `emai
 --
 ALTER TABLE `alarmas`
   ADD PRIMARY KEY (`alarma_id`),
-  ADD KEY `usuario_id` (`usuario_id`);
+  ADD KEY `programacion_id` (`programacion_id`),
+  ADD KEY `horario_id` (`horario_id`),
+  ADD KEY `idx_alarmas_programacion` (`programacion_id`),
+  ADD KEY `idx_alarmas_activas` (`activa`),
+  ADD KEY `idx_alarmas_horario` (`horario_id`);
 
 --
 -- Indices de la tabla `alarma_remedio`
@@ -460,7 +458,7 @@ ALTER TABLE `alarmas`
 -- AUTO_INCREMENT de la tabla `horarios_tratamiento`
 --
 ALTER TABLE `horarios_tratamiento`
-  MODIFY `horario_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=19;
+  MODIFY `horario_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=161;
 
 --
 -- AUTO_INCREMENT de la tabla `movimientos_pastillas`
@@ -478,7 +476,7 @@ ALTER TABLE `programacion_horarios`
 -- AUTO_INCREMENT de la tabla `programacion_tratamientos`
 --
 ALTER TABLE `programacion_tratamientos`
-  MODIFY `programacion_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=14;
+  MODIFY `programacion_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=27;
 
 --
 -- AUTO_INCREMENT de la tabla `remedios_globales`
@@ -518,7 +516,8 @@ ALTER TABLE `usuarios`
 -- Filtros para la tabla `alarmas`
 --
 ALTER TABLE `alarmas`
-  ADD CONSTRAINT `alarmas_ibfk_1` FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`usuario_id`);
+  ADD CONSTRAINT `alarmas_ibfk_1` FOREIGN KEY (`programacion_id`) REFERENCES `programacion_tratamientos` (`programacion_id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `alarmas_ibfk_2` FOREIGN KEY (`horario_id`) REFERENCES `programacion_horarios` (`horario_id`) ON DELETE SET NULL;
 
 --
 -- Filtros para la tabla `alarma_remedio`

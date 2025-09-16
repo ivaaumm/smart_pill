@@ -11,7 +11,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Home from "./screens/home";
 import Medicamentos from "./screens/medicamentos";
-import RegisterTab from "./screens/RegisterTab";
+import RegistroTomas from "./screens/RegistroTomas";
 import Perfil from "./screens/Perfil";
 import Bluetooth from "./screens/Bluetooth";
 import SoundTest from "./screens/SoundTest";
@@ -73,7 +73,7 @@ function Tabs({ navigation }) {
     >
       <Tab.Screen
         name="Registro"
-        component={RegisterTab}
+        component={RegistroTomas}
         options={{
           title: "Registro",
           tabBarItemStyle: {

@@ -17,12 +17,18 @@ import {
   Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { MaterialIcons } from '@expo/vector-icons';
-import { Audio } from 'expo-av';
-import * as Notifications from 'expo-notifications';
-import { playSoundPreview, scheduleNotification, cancelScheduledNotification } from '../utils/audioUtils';
-import { Picker } from '@react-native-picker/picker';
-import AlarmComponent from './components/AlarmComponent';
+import { MaterialIcons } from "@expo/vector-icons";
+import { setAudioModeAsync } from "expo-audio";
+// Notificaciones removidas - solo pantalla directa
+import {
+  playSoundPreview,
+  // scheduleNotification,
+  // cancelScheduledNotification,
+  stopCurrentSound,
+} from "../utils/audioUtils";
+import { setupAllPermissions, checkPermissionsStatus } from '../utils/permissionsConfig';
+import { Picker } from "@react-native-picker/picker";
+import AlarmComponent from "./components/AlarmComponent";
 import { apiRequest, API_CONFIG } from "../config";
 import { UserContext } from "../UserContextProvider";
 import DateTimePicker from "@react-native-community/datetimepicker";
@@ -49,6 +55,7 @@ const Medicamentos = ({ navigation }) => {
   const [cargandoTomas, setCargandoTomas] = useState(false);
   const [programacionData, setProgramacionData] = useState({
     nombre_tratamiento: "",
+    fecha_inicio: new Date(), // Fecha actual por defecto
     fecha_fin: null,
     dosis_por_toma: "1 tableta",
     dias_seleccionados: [],
@@ -79,43 +86,27 @@ const Medicamentos = ({ navigation }) => {
       "filtradas:",
       filteredPastillas.length
     );
-    
+
     // Debug: Mostrar las primeras pastillas cargadas
     if (pastillas.length > 0) {
       console.log("📝 Contenido de pastillas:", pastillas.slice(0, 3)); // Mostrar solo las primeras 3 para no saturar
     }
   }, [pastillas, filteredPastillas]);
 
-  // Función para cargar las tomas programadas para hoy
+  // Función para cargar las tomas programadas para hoy (sin notificaciones)
   const cargarTomasHoy = async () => {
     try {
       setCargandoTomas(true);
-      
-      // Obtener todas las notificaciones programadas
-      const notificaciones = await Notifications.getAllScheduledNotificationsAsync();
-      
-      // Filtrar solo las de hoy
-      const hoy = new Date();
-      hoy.setHours(0, 0, 0, 0);
-      
-      const manana = new Date(hoy);
-      manana.setDate(manana.getDate() + 1);
-      
-      const tomasDeHoy = notificaciones.filter(notif => {
-        const fechaNotificacion = new Date(notif.trigger.date);
-        return fechaNotificacion >= hoy && fechaNotificacion < manana;
-      });
-      
-      // Ordenar por hora
-      tomasDeHoy.sort((a, b) => {
-        return new Date(a.trigger.date) - new Date(b.trigger.date);
-      });
-      
-      setTomasHoy(tomasDeHoy);
-      console.log('📅 Tómase de hoy cargadas:', tomasDeHoy);
+
+      // Sin notificaciones - las alarmas se manejan directamente
+      console.log("📅 Sistema configurado para pantalla directa sin notificaciones");
+      setTomasHoy([]);
     } catch (error) {
-      console.error('Error al cargar las tomas de hoy:', error);
-      Alert.alert('Error', 'No se pudieron cargar las tomas programadas para hoy');
+      console.error("Error al cargar las tomas de hoy:", error);
+      Alert.alert(
+        "Error",
+        "No se pudieron cargar las tomas programadas para hoy"
+      );
     } finally {
       setCargandoTomas(false);
     }
@@ -139,7 +130,7 @@ const Medicamentos = ({ navigation }) => {
   // Cargar pastillas al montar el componente y cuando cambia el usuario
   useEffect(() => {
     console.log("🚀 Iniciando carga de pastillas...");
-    
+
     const loadInitialData = async () => {
       try {
         console.log("🔄 Cargando datos iniciales...");
@@ -150,9 +141,9 @@ const Medicamentos = ({ navigation }) => {
         setError(`Error al cargar los datos: ${error.message}`);
       }
     };
-    
+
     loadInitialData();
-    
+
     // Limpiar al desmontar
     return () => {
       console.log("🧹 Limpiando efecto de carga inicial");
@@ -162,21 +153,24 @@ const Medicamentos = ({ navigation }) => {
   // Cargar programaciones del usuario
   const cargarProgramaciones = async () => {
     if (!user) return;
-    
-    console.log('🔄 Cargando programaciones para el usuario:', user.usuario_id);
+
+    console.log("🔄 Cargando programaciones para el usuario:", user.usuario_id);
     setLoadingProgramaciones(true);
-    
+
     try {
-      const response = await apiRequest(API_CONFIG.ENDPOINTS.OBTPROGRAMACIONES + `?usuario_id=${user.usuario_id}`);
-      console.log('📊 Respuesta de programaciones:', response);
-      
+      const response = await apiRequest(
+        API_CONFIG.ENDPOINTS.OBTPROGRAMACIONES +
+          `?usuario_id=${user.usuario_id}`
+      );
+      console.log("📊 Respuesta de programaciones:", response);
+
       // Manejar diferentes formatos de respuesta
       let programacionesData = [];
-      
+
       // Caso 1: Respuesta con data.data (formato anidado)
       if (response?.data?.data && Array.isArray(response.data.data)) {
         programacionesData = response.data.data;
-      } 
+      }
       // Caso 2: Respuesta directa con array en data
       else if (Array.isArray(response?.data)) {
         programacionesData = response.data;
@@ -187,32 +181,37 @@ const Medicamentos = ({ navigation }) => {
       }
       // Caso 4: Respuesta en formato de error
       else if (response?.error) {
-        console.error('Error del servidor:', response.error);
-        Alert.alert('Error', 'No se pudieron cargar los tratamientos: ' + response.error);
+        console.error("Error del servidor:", response.error);
+        Alert.alert(
+          "Error",
+          "No se pudieron cargar los tratamientos: " + response.error
+        );
       }
-      
+
       console.log(`📊 ${programacionesData.length} programaciones obtenidas`);
-      
+
       // Ordenar por fecha de inicio (más recientes primero)
       programacionesData.sort((a, b) => {
         const fechaA = new Date(a.fecha_inicio || 0);
         const fechaB = new Date(b.fecha_inicio || 0);
         return fechaB - fechaA;
       });
-      
+
       // Actualizar el estado
       setProgramaciones(programacionesData);
-      
+
       // Si no hay programaciones, mostrar un mensaje
       if (programacionesData.length === 0) {
-        console.log('ℹ️ No se encontraron programaciones para este usuario');
+        console.log("ℹ️ No se encontraron programaciones para este usuario");
       }
-      
+
       return programacionesData;
-      
     } catch (error) {
       console.error("❌ Error al cargar programaciones:", error);
-      Alert.alert('Error', 'No se pudieron cargar los tratamientos. Verifica tu conexión e intenta de nuevo.');
+      Alert.alert(
+        "Error",
+        "No se pudieron cargar los tratamientos. Verifica tu conexión e intenta de nuevo."
+      );
       setProgramaciones([]);
       return [];
     } finally {
@@ -225,111 +224,123 @@ const Medicamentos = ({ navigation }) => {
     setLoading(true);
     setError(null);
     console.log("🔄 Iniciando carga de pastillas...");
+    console.log("🔍 Estado actual:", {
+      loading,
+      pastillasLength: pastillas.length,
+      filteredPastillasLength: filteredPastillas.length,
+      searchText,
+    });
 
     try {
       console.log("🔍 Realizando petición a catálogo de pastillas");
       const startTime = Date.now();
-      
-      // Usar la API configurada con la URL correcta
-      const apiUrl = `${API_CONFIG.ENDPOINTS.CATALOGO_PASTILLAS}`; // Ya incluye la ruta base
-      console.log('🌐 URL de la petición:', apiUrl);
-      
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000); // Timeout de 10 segundos
-      
-      const response = await fetch(apiUrl, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Cache-Control': 'no-cache',
-          'Pragma': 'no-cache'
-        },
-        credentials: 'include',
-        signal: controller.signal
-      }).finally(() => clearTimeout(timeoutId));
-      
-      const endTime = Date.now();
-      console.log(`✅ Respuesta recibida en ${endTime - startTime}ms`);
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('❌ Error en la respuesta:', {
-          status: response.status,
-          statusText: response.statusText,
-          headers: Object.fromEntries(response.headers.entries()),
-          body: errorText
+
+      // Usar helper apiRequest para construir correctamente la URL base
+      const { success, data, status, statusText, error, message } =
+        await apiRequest(API_CONFIG.ENDPOINTS.CATALOGO_PASTILLAS, {
+          method: "GET",
         });
-        throw new Error(`Error HTTP ${response.status}: ${response.statusText || 'Error en la petición'}`);
+      console.log(`✅ Respuesta recibida en ${Date.now() - startTime}ms`);
+      if (!success) {
+        const detalle =
+          message ||
+          error ||
+          statusText ||
+          (status ? `HTTP ${status}` : null) ||
+          "Error en la petición";
+        throw new Error(detalle);
       }
 
-      let responseData;
-      try {
-        responseData = await response.json();
-        console.log('📥 Datos recibidos:', {
-          tipo: typeof responseData,
-          esArray: Array.isArray(responseData),
-          tieneSuccess: 'success' in responseData,
-          tieneData: 'data' in responseData,
-          dataEsArray: Array.isArray(responseData?.data),
-          datosMuestra: Array.isArray(responseData?.data) ? responseData.data.slice(0, 2) : 'N/A'
-        });
-      } catch (e) {
-        console.error('❌ Error al parsear la respuesta JSON:', e);
-        throw new Error('Error al procesar la respuesta del servidor: ' + e.message);
-      }
+      let responseData = data;
+      console.log("📥 Datos recibidos:", {
+        tipo: typeof responseData,
+        esArray: Array.isArray(responseData),
+        tieneSuccess:
+          responseData &&
+          typeof responseData === "object" &&
+          "success" in responseData,
+        tieneData:
+          responseData &&
+          typeof responseData === "object" &&
+          "data" in responseData,
+        dataEsArray: Array.isArray(responseData?.data),
+      });
 
       let pastillasData = [];
-      
+
       // Manejar diferentes formatos de respuesta
-      if (responseData && typeof responseData === 'object') {
+      if (responseData && typeof responseData === "object") {
         if (Array.isArray(responseData)) {
           // Caso 1: La respuesta es directamente un array
           pastillasData = responseData;
-          console.log('📥 Datos recibidos como array directo');
-        } else if (responseData.success !== undefined && Array.isArray(responseData.data)) {
+          console.log("📥 Datos recibidos como array directo");
+        } else if (
+          responseData.success !== undefined &&
+          Array.isArray(responseData.data)
+        ) {
           // Caso 2: Formato estándar {success: true, data: [...]}
           pastillasData = responseData.data;
-          console.log('📥 Datos recibidos en formato estándar con éxito');
+          console.log("📥 Datos recibidos en formato estándar con éxito");
         } else if (responseData.data && Array.isArray(responseData.data)) {
           // Caso 3: Tiene propiedad data que es un array
           pastillasData = responseData.data;
-          console.log('📥 Datos extraídos de la propiedad data');
+          console.log("📥 Datos extraídos de la propiedad data");
         } else if (responseData.error) {
           // Caso 4: Hay un error en la respuesta
-          console.error('Error del servidor:', responseData.error);
+          console.error("Error del servidor:", responseData.error);
           throw new Error(responseData.error);
         } else {
           // Caso 5: La respuesta es un objeto, pero no en el formato esperado
-          console.warn('Formato de respuesta inesperado, intentando extraer datos:', responseData);
+          console.warn(
+            "Formato de respuesta inesperado, intentando extraer datos:",
+            responseData
+          );
           // Intentar extraer cualquier propiedad que sea un array
           const arrayProps = Object.values(responseData).filter(Array.isArray);
           if (arrayProps.length > 0) {
             pastillasData = arrayProps[0]; // Tomar el primer array que encontremos
-            console.log(`📥 Se encontró un array en la respuesta con ${pastillasData.length} elementos`);
+            console.log(
+              `📥 Se encontró un array en la respuesta con ${pastillasData.length} elementos`
+            );
           } else {
             // Si no hay arrays, convertir el objeto en un array
             pastillasData = Object.values(responseData);
-            console.log('📥 Convertido objeto a array de valores');
+            console.log("📥 Convertido objeto a array de valores");
           }
         }
       } else {
-        console.warn('Formato de respuesta no soportado:', responseData);
-        throw new Error('Formato de respuesta no soportado del servidor');
+        console.warn("Formato de respuesta no soportado:", responseData);
+        throw new Error("Formato de respuesta no soportado del servidor");
       }
-      
+
       // Si no hay datos, usar datos de ejemplo para pruebas
       if (pastillasData.length === 0) {
-        console.log('⚠️ No se encontraron pastillas, usando datos de ejemplo');
+        console.log("⚠️ No se encontraron pastillas, usando datos de ejemplo");
         pastillasData = [
-          { id: 1, nombre: 'Paracetamol', descripcion: 'Analgésico y antipirético', presentacion: 'Tabletas 500mg' },
-          { id: 2, nombre: 'Ibuprofeno', descripcion: 'Antiinflamatorio no esteroideo', presentacion: 'Cápsulas 400mg' },
-          { id: 3, nombre: 'Omeprazol', descripcion: 'Inhibidor de la bomba de protones', presentacion: 'Cápsulas 20mg' },
+          {
+            id: 1,
+            nombre: "Paracetamol",
+            descripcion: "Analgésico y antipirético",
+            presentacion: "Tabletas 500mg",
+          },
+          {
+            id: 2,
+            nombre: "Ibuprofeno",
+            descripcion: "Antiinflamatorio no esteroideo",
+            presentacion: "Cápsulas 400mg",
+          },
+          {
+            id: 3,
+            nombre: "Omeprazol",
+            descripcion: "Inhibidor de la bomba de protones",
+            presentacion: "Cápsulas 20mg",
+          },
         ];
       }
 
       console.log(`📊 Se encontraron ${pastillasData.length} pastillas`);
-      
+      console.log("📝 Ejemplo de datos recibidos:", pastillasData.slice(0, 2));
+
       if (pastillasData.length === 0) {
         console.log("ℹ️ No se encontraron pastillas en la base de datos");
         setError("No se encontraron medicamentos en la base de datos");
@@ -337,31 +348,45 @@ const Medicamentos = ({ navigation }) => {
         setFilteredPastillas([]);
         return;
       }
-      
+
       // Asegurarse de que todos los elementos tengan los campos requeridos
-      const validatedPastillas = pastillasData.map(item => ({
-        remedio_global_id: item.remedio_global_id || Math.random().toString(36).substr(2, 9),
-        nombre_comercial: item.nombre || item.nombre_comercial || 'Sin nombre',
-        descripcion: item.descripcion || item.descripcion || '',
-        presentacion: item.presentacion || '',
-        peso_unidad: item.peso_unidad || 'N/A',
-        efectos_secundarios: item.efectos_secundarios || ''
+      const validatedPastillas = pastillasData.map((item) => ({
+        remedio_global_id:
+          item.remedio_global_id || Math.random().toString(36).substr(2, 9),
+        nombre_comercial: item.nombre || item.nombre_comercial || "Sin nombre",
+        descripcion: item.descripcion || item.descripcion || "",
+        presentacion: item.presentacion || "",
+        peso_unidad: item.peso_unidad || "N/A",
+        efectos_secundarios: item.efectos_secundarios || "",
       }));
-      
+
       // Ordenar alfabéticamente por nombre
-      const sortedPastillas = [...validatedPastillas].sort((a, b) => 
-        (a.nombre_comercial || '').localeCompare(b.nombre_comercial || '')
+      const sortedPastillas = [...validatedPastillas].sort((a, b) =>
+        (a.nombre_comercial || "").localeCompare(b.nombre_comercial || "")
       );
-      
-      console.log('💾 Guardando pastillas en el estado...');
+
+      console.log(
+        `📋 Cargando ${sortedPastillas.length} pastillas disponibles`
+      );
+      console.log(
+        "📋 Primeras pastillas:",
+        sortedPastillas.slice(0, 3).map((p) => ({
+          id: p.remedio_global_id || p.id,
+          nombre: p.nombre_comercial || p.nombre,
+          presentacion: p.presentacion,
+        }))
+      );
+
+      console.log("💾 Guardando pastillas en el estado...");
       setPastillas(sortedPastillas);
       setFilteredPastillas(sortedPastillas);
-      
+
       console.log("📋 Primeras pastillas:", sortedPastillas.slice(0, 2));
       console.log("✅ Pastillas cargadas y validadas correctamente");
     } catch (error) {
       console.error("❌ Error al cargar pastillas:", error);
-      const errorMessage = error.message || 'Error desconocido al cargar los medicamentos';
+      const errorMessage =
+        error.message || "Error desconocido al cargar los medicamentos";
       setError(`Error: ${errorMessage}`);
       setPastillas([]);
       setFilteredPastillas([]);
@@ -380,29 +405,68 @@ const Medicamentos = ({ navigation }) => {
 
   // Filtrar pastillas por búsqueda
   const filtrarPastillas = (texto) => {
+    console.log("🔍 Iniciando filtrado con texto:", texto);
+    console.log("📊 Estado actual:", {
+      pastillasLength: pastillas.length,
+      filteredPastillasLength: filteredPastillas.length,
+      currentSearchText: searchText,
+    });
+
     setSearchText(texto);
-    
-    console.log('🔍 Filtrando pastillas con texto:', texto);
-    console.log('📊 Total de pastillas disponibles:', pastillas.length);
-    
-    if (!texto || texto.trim() === '') {
-      console.log('🔄 Mostrando todas las pastillas');
+
+    if (!texto || texto.trim() === "") {
+      console.log("🔄 Mostrando todas las pastillas");
+      console.log(
+        "📋 Pastillas a mostrar:",
+        pastillas.map((p) => ({
+          id: p.remedio_global_id || p.id,
+          nombre: p.nombre_comercial || p.nombre,
+        }))
+      );
       setFilteredPastillas([...pastillas]);
-    } else {
-      const searchTerm = texto.toLowerCase().trim();
-      const filtered = pastillas.filter(item => {
-        const nombre = (item.nombre_comercial || '').toLowerCase();
-        const descripcion = (item.descripcion || '').toLowerCase();
-        const presentacion = (item.presentacion || '').toLowerCase();
-        return (
-          nombre.includes(searchTerm) || 
-          descripcion.includes(searchTerm) ||
-          presentacion.includes(searchTerm)
-        );
-      });
-      console.log(`🔍 Filtradas ${filtered.length} pastillas`);
-      setFilteredPastillas(filtered);
+      return;
     }
+
+    const searchTerm = texto.toLowerCase().trim();
+    console.log("🔍 Buscando término:", searchTerm);
+
+    const filtered = pastillas.filter((item) => {
+      const nombre = (item.nombre_comercial || item.nombre || "").toLowerCase();
+      const descripcion = (item.descripcion || "").toLowerCase();
+      const presentacion = (item.presentacion || "").toLowerCase();
+
+      const matches =
+        nombre.includes(searchTerm) ||
+        descripcion.includes(searchTerm) ||
+        presentacion.includes(searchTerm);
+
+      if (matches) {
+        console.log("✅ Coincidencia encontrada:", {
+          nombre: item.nombre_comercial || item.nombre,
+          searchTerm,
+          matches: {
+            nombre: nombre.includes(searchTerm),
+            descripcion: descripcion.includes(searchTerm),
+            presentacion: presentacion.includes(searchTerm),
+          },
+        });
+      }
+
+      return matches;
+    });
+
+    console.log(
+      `🔍 Resultados de búsqueda: ${filtered.length} de ${pastillas.length} pastillas`
+    );
+    console.log(
+      "📋 Resultados:",
+      filtered.map((f) => ({
+        id: f.remedio_global_id || f.id,
+        nombre: f.nombre_comercial || f.nombre,
+      }))
+    );
+
+    setFilteredPastillas(filtered);
   };
 
   // Seleccionar pastilla y avanzar al siguiente paso
@@ -434,17 +498,17 @@ const Medicamentos = ({ navigation }) => {
     console.log("🚀 Abriendo selector, pastillas actuales:", pastillas.length);
     console.log("📡 Abriendo selector de pastillas...");
     setError(null);
-    
+
     // Mostrar el modal inmediatamente para mejor experiencia de usuario
     setModalVisible(true);
     setCurrentStep(1);
     setEditandoProgramacion(null);
     resetearFormulario();
-    
+
     // Forzar recarga de pastillas para asegurar que tengamos los datos más recientes
     console.log("🔄 Forzando recarga de pastillas...");
     await cargarPastillas();
-    
+
     console.log("✅ Pastillas cargadas, mostrando selector");
   };
 
@@ -515,52 +579,52 @@ const Medicamentos = ({ navigation }) => {
   // Manejador del selector de hora
   const handleTimeChange = (event, selectedTime) => {
     setShowTimePicker(false);
-    
+
     if (selectedTime) {
-      // Crear una nueva fecha con la hora seleccionada
-      const localDate = new Date();
-      
-      // Configurar la hora exacta para Buenos Aires (UTC-3)
-      // No hacemos ajuste de zona horaria ya que queremos la hora exacta seleccionada
+      // Obtener la hora y minutos directamente del DateTimePicker
       const localHours = selectedTime.getHours();
       const localMinutes = selectedTime.getMinutes();
-      
-      // Establecer la hora exacta
+
+      // Formatear la hora para mostrar (formato 24h)
+      const formattedTime = `${String(localHours).padStart(2, "0")}:${String(
+        localMinutes
+      ).padStart(2, "0")}`;
+
+      // Crear objeto Date con la hora exacta seleccionada (sin conversiones de zona horaria)
+      const localDate = new Date();
       localDate.setHours(localHours, localMinutes, 0, 0);
-      
-      // Formatear la hora para mostrar
-      const formattedTime = `${String(localHours).padStart(2, '0')}:${String(localMinutes).padStart(2, '0')}`;
-      
+
       // Para depuración
-      console.log('Hora seleccionada:', formattedTime);
-      console.log('Hora configurada (local):', localDate.toString());
-      console.log('Hora UTC:', localDate.toISOString());
-      console.log('Zona horaria:', Intl.DateTimeFormat().resolvedOptions().timeZone);
-      
-      setProgramacionData(prev => {
-        const newHorario = { 
-          hora: formattedTime, 
+      console.log("🕐 Hora seleccionada:", formattedTime);
+      console.log("🕐 Objeto Date creado:", localDate.toString());
+      console.log("🕐 Horas:", localHours, "Minutos:", localMinutes);
+
+      setProgramacionData((prev) => {
+        const newHorario = {
+          hora: formattedTime,
           dosis: 1,
-          timeObject: localDate // Guardar el objeto Date completo para referencia
+          timeObject: localDate, // Guardar el objeto Date completo para referencia
         };
-        
+
         if (horarioEditando !== null) {
           // Si estamos editando un horario existente
           return {
             ...prev,
-            horarios: prev.horarios.map((h, i) => 
-              i === horarioEditando ? { ...h, hora: formattedTime, timeObject: localDate } : h
-            )
+            horarios: prev.horarios.map((h, i) =>
+              i === horarioEditando
+                ? { ...h, hora: formattedTime, timeObject: localDate }
+                : h
+            ),
           };
         } else {
           // Si estamos agregando un nuevo horario
           return {
             ...prev,
-            horarios: [...(prev.horarios || []), newHorario]
+            horarios: [...(prev.horarios || []), newHorario],
           };
         }
       });
-      
+
       setHorarioEditando(null);
     }
   };
@@ -607,21 +671,31 @@ const Medicamentos = ({ navigation }) => {
   const avanzarAConfiguracionAlarmas = () => {
     // Verificar que hay horarios configurados
     if (!programacionData.horarios || programacionData.horarios.length === 0) {
-      Alert.alert("Horarios requeridos", "Debes configurar al menos un horario antes de continuar con la configuración de alarmas.");
+      Alert.alert(
+        "Horarios requeridos",
+        "Debes configurar al menos un horario antes de continuar con la configuración de alarmas."
+      );
       return;
     }
-    
+
     // Inicializar las alarmas con los horarios seleccionados
-    const nuevasAlarmas = programacionData.horarios.map(horario => ({
-      id: null,
-      time: new Date(`2000-01-01T${horario.hora}`),
-      enabled: true,
-      days: programacionData.dias_seleccionados || [0, 0, 0, 0, 0, 0, 0],
-      sound: 'default',
-      vibrate: true,
-      dosis: horario.dosis || 1
-    }));
-    
+    const nuevasAlarmas = programacionData.horarios.map((horario) => {
+      // Crear fecha sin zona horaria para evitar conversiones automáticas
+      const [hours, minutes] = horario.hora.split(':');
+      const timeDate = new Date();
+      timeDate.setHours(parseInt(hours, 10), parseInt(minutes, 10), 0, 0);
+      
+      return {
+        id: null,
+        time: timeDate,
+        enabled: true,
+        days: programacionData.dias_seleccionados || [0, 0, 0, 0, 0, 0, 0],
+        sound: "default",
+        vibrate: true,
+        dosis: horario.dosis || 1,
+      };
+    });
+
     setAlarms(nuevasAlarmas);
     setCurrentStep(5);
   };
@@ -633,242 +707,306 @@ const Medicamentos = ({ navigation }) => {
   // Programar todas las alarmas activas
   const programarAlarmas = async () => {
     if (!alarms || alarms.length === 0) return [];
-    
+
     try {
       const programacionId = editandoProgramacion?.id || Date.now().toString();
       const alarmasProgramadas = [];
-      
+
       // Obtener la zona horaria actual
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      console.log('📅 Iniciando programación de alarmas');
-      console.log('Zona horaria:', timeZone, '(Buenos Aires, UTC-3)');
-      
-      // Cancelar notificaciones existentes para evitar duplicados
-      await Notifications.cancelAllScheduledNotificationsAsync();
-      console.log('✅ Notificaciones anteriores canceladas');
-      
+      console.log("📅 Iniciando programación de alarmas");
+      console.log("Zona horaria:", timeZone, "(Buenos Aires, UTC-3)");
+
+      // Notificaciones removidas - solo mostrar pantalla directa
+      console.log('📱 Sistema configurado para mostrar pantalla directamente sin notificaciones');
+
       for (let i = 0; i < alarms.length; i++) {
         const alarma = alarms[i];
         if (!alarma.enabled) continue;
-        
+
         // Obtener la hora y minuto del objeto time (ya está en hora local)
-        const horaAlarma = alarma.timeObject || alarma.time;
+        const horaAlarma = alarma.time;
         if (!horaAlarma) {
-          console.error('❌ Hora de alarma no válida:', alarma);
+          console.error("❌ Hora de alarma no válida:", alarma);
           continue;
         }
-        
+
         try {
           // Asegurarse de que tenemos un objeto Date válido
-          const fechaHora = horaAlarma instanceof Date ? new Date(horaAlarma) : new Date(horaAlarma);
-          if (isNaN(fechaHora.getTime())) {
-            console.error('❌ Fecha/hora de alarma no válida:', horaAlarma);
-            continue;
+          let fechaHora;
+          if (horaAlarma instanceof Date) {
+            fechaHora = horaAlarma;
+          } else if (typeof horaAlarma === 'string') {
+            // Si es string en formato HH:MM, crear Date con hora local
+            const [hours, minutes] = horaAlarma.split(':');
+            fechaHora = new Date();
+            fechaHora.setHours(parseInt(hours, 10), parseInt(minutes, 10), 0, 0);
+          } else {
+            fechaHora = new Date(horaAlarma);
           }
           
+          if (isNaN(fechaHora.getTime())) {
+            console.error("❌ Fecha/hora de alarma no válida:", horaAlarma);
+            continue;
+          }
+
           // Usar la hora exacta sin ajustes de zona horaria
           const hora = fechaHora.getHours();
           const minuto = fechaHora.getMinutes();
           
-          // Calcular la próxima fecha para cada día seleccionado
+          console.log(`🕐 Procesando alarma ${i + 1}: ${String(hora).padStart(2, '0')}:${String(minuto).padStart(2, '0')}`);
+
+          // Obtener días seleccionados y mapeo de días de la semana
           const diasSeleccionados = programacionData.dias_seleccionados || [];
           
+          // Mapeo de días de la semana (0=Domingo, 1=Lunes, ..., 6=Sábado)
+          const nombresDias = {
+            lunes: 1,
+            martes: 2,
+            miércoles: 3,
+            jueves: 4,
+            viernes: 5,
+            sábado: 6,
+            domingo: 0,
+          };
+
+          // Programar notificaciones para todos los días seleccionados
+          console.log(`\n📅 Programando alarmas para horario ${String(hora).padStart(2, "0")}:${String(minuto).padStart(2, "0")}`);
+          console.log("- Días seleccionados:", diasSeleccionados.join(', '));
+          
+          // Programar una notificación para cada día seleccionado
           for (const dia of diasSeleccionados) {
             const ahora = new Date();
-            
-            // Mapeo de días de la semana (0=Domingo, 1=Lunes, ..., 6=Sábado)
-            const nombresDias = {
-              'lunes': 1, 'martes': 2, 'miércoles': 3, 'jueves': 4,
-              'viernes': 5, 'sábado': 6, 'domingo': 0
-            };
-            
-            // Array de nombres de días para referencia
-            const diasSemana = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
-            
-            // Obtener el número del día de la semana (0-6)
-            const diaNumero = typeof dia === 'string' ? (nombresDias[dia.toLowerCase()] ?? 1) : dia;
+            const diaNumero = typeof dia === "string" ? nombresDias[dia.toLowerCase()] ?? 1 : dia;
             const diaActual = ahora.getDay();
             
-            // Calcular la diferencia de días
+            // Calcular la diferencia de días para este día específico
             let diferenciaDias = (diaNumero - diaActual + 7) % 7;
             
-            // Crear la fecha de notificación en la zona horaria local
-            let fechaNotificacion = new Date(ahora);
+            // Si es el mismo día (diferenciaDias === 0), siempre programar para la próxima semana
+            // para evitar notificaciones inmediatas
+            if (diferenciaDias === 0) {
+              diferenciaDias = 7;
+              console.log(`📅 Es el mismo día (${dia}), programando para la próxima semana`);
+            }
+            
+            // Crear la fecha de notificación para este día
+            let fechaNotificacion = new Date();
             fechaNotificacion.setDate(ahora.getDate() + diferenciaDias);
             fechaNotificacion.setHours(hora, minuto, 0, 0);
             
-            // Si la hora ya pasó hoy, programar para la próxima semana
-            if (fechaNotificacion <= ahora) {
+            console.log(`📅 Diferencia de días calculada: ${diferenciaDias} días`);
+            console.log(`📅 Fecha base: ${ahora.toLocaleString('es-AR')}`);
+            console.log(`📅 Fecha programada inicial: ${fechaNotificacion.toLocaleString('es-AR')}`);
+            
+            // VALIDACIÓN CRÍTICA: Asegurar que la notificación sea SIEMPRE en el futuro
+            const tiempoHastaNotificacion = fechaNotificacion.getTime() - ahora.getTime();
+            const minutosHastaNotificacion = Math.round(tiempoHastaNotificacion / (1000 * 60));
+            
+            if (tiempoHastaNotificacion <= 0) {
+              console.error(`❌ ERROR: Notificación programada en el pasado para ${dia}`);
+              console.error(`❌ Fecha calculada: ${fechaNotificacion.toLocaleString('es-AR')}`);
+              console.error(`❌ Fecha actual: ${ahora.toLocaleString('es-AR')}`);
+              continue; // Saltar esta notificación
+            }
+            
+            if (minutosHastaNotificacion < 5) {
+              console.warn(`⚠️ Notificación muy próxima (${minutosHastaNotificacion} min), programando para próxima semana`);
               fechaNotificacion.setDate(fechaNotificacion.getDate() + 7);
             }
             
-            // Asegurarse de que la fecha sea válida
-            if (isNaN(fechaNotificacion.getTime())) {
-              console.error('❌ Fecha de notificación inválida después de ajustar días');
-              continue;
-            }
-            
-            console.log(`\n📅 Programando alarma ${i + 1} para el día ${dia}:`);
-            console.log('- Hora seleccionada (local):', `${String(hora).padStart(2, '0')}:${String(minuto).padStart(2, '0')}`);
-            console.log('- Fecha programada (local):', fechaNotificacion.toString());
-            
-            // Preparar datos para la notificación
+            console.log(`📅 Programando para ${dia}: ${fechaNotificacion.toLocaleString('es-AR')}`);
+
+            // Preparar datos para la notificación de este día
             const notificationData = {
               programacionId,
               alarmaIndex: i,
-              dia,
-              hora: `${String(hora).padStart(2, '0')}:${String(minuto).padStart(2, '0')}`,
+              dia: dia,
+              hora: `${String(hora).padStart(2, "0")}:${String(minuto).padStart(2, "0")}`,
               timezone: timeZone,
-              sound: alarma.sound || 'default',
-              originalDate: fechaNotificacion.toISOString(),
+              sound: alarma.sound || "default",
+              originalDate: fechaNotificacion.toString(),
             };
-            
-            // Si por alguna razón la fecha no es válida, saltar a la siguiente iteración
-            if (isNaN(fechaNotificacion.getTime())) {
-              console.error('❌ Fecha inválida después de ajustar:', {
-                ahora: ahora.toString(),
-                dia,
-                diaNumero,
-                diaActual,
-                diferenciaDias,
-                hora,
-                minuto
-              });
-              continue;
-            }
-            
-            // Verificar si la fecha es válida
-            if (isNaN(fechaNotificacion.getTime())) {
-              console.error('❌ Fecha de notificación inválida después de ajustar días');
-              console.log('- Día actual:', ahora.toString());
-              console.log('- Día objetivo:', dia);
-              console.log('- Diferencia de días:', diferenciaDias);
-              continue;
-            }
-            
-            // Asegurarse de que la fecha sea en el futuro
-            if (fechaNotificacion <= ahora) {
-              fechaNotificacion.setDate(fechaNotificacion.getDate() + 7);
-              console.log('⚠️ La fecha estaba en el pasado, ajustando a la próxima semana:', fechaNotificacion.toString());
-            }
-            
+
             // Debug: Mostrar información detallada
-            console.log('\n📅 Programando alarma:');
-            console.log('- Hora seleccionada (local):', `${hora.toString().padStart(2, '0')}:${minuto.toString().padStart(2, '0')}`);
-            console.log('- Fecha programada (local):', fechaNotificacion.toString());
-            console.log('- Día de la semana:', ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'][fechaNotificacion.getDay()]);
+            console.log("\n📅 Programando alarma para día:", dia);
+            console.log(
+              "- Hora seleccionada (local):",
+              `${hora.toString().padStart(2, "0")}:${minuto
+                .toString()
+                .padStart(2, "0")}`
+            );
+            console.log(
+              "- Fecha programada (local):",
+              fechaNotificacion.toString()
+            );
+            console.log(
+              "- Día de la semana:",
+              [
+                "Domingo",
+                "Lunes",
+                "Martes",
+                "Miércoles",
+                "Jueves",
+                "Viernes",
+                "Sábado",
+              ][fechaNotificacion.getDay()]
+            );
             
-            try {
-              const notificationId = await scheduleNotification({
-                id: `${programacionId}_${i}_${dia}`,
-                title: 'Recordatorio de medicación',
-                body: `Es hora de tomar ${programacionData.nombre_medicamento || 'tu medicamento'}`,
-                sound: alarma.sound || 'default',
-                date: new Date(fechaNotificacion), // Crear una nueva instancia de Date para evitar problemas de referencia
-                data: {
-                  programacionId,
-                  alarmaIndex: i,
-                  dia,
-                  hora: alarma.time ? alarma.time.toString() : '00:00',
-                },
-              });
-              
-              if (notificationId) {
-                console.log('✅ Notificación programada con éxito. ID:', notificationId);
-                alarmasProgramadas.push({
-                  ...alarma,
-                  notificationId,
-                  fechaProgramada: fechaNotificacion.toISOString(),
-                });
-              } else {
-                console.error('⚠️ No se pudo programar la notificación (ID nulo)');
-              }
-            } catch (error) {
-              console.error('❌ Error al programar notificación:', error);
+            // Logs adicionales de depuración
+            const ahoraDebug = new Date();
+            const tiempoHastaAlarma = fechaNotificacion.getTime() - ahoraDebug.getTime();
+            const minutosHastaAlarma = Math.round(tiempoHastaAlarma / (1000 * 60));
+            const horasHastaAlarma = Math.round(tiempoHastaAlarma / (1000 * 60 * 60));
+            console.log('🔍 DEBUG - Fecha/hora actual:', ahoraDebug.toLocaleString('es-AR'));
+            console.log('🔍 DEBUG - Fecha/hora calculada para alarma:', fechaNotificacion.toLocaleString('es-AR'));
+            console.log('🔍 DEBUG - Tiempo hasta la alarma (ms):', tiempoHastaAlarma);
+            console.log('🔍 DEBUG - Tiempo hasta la alarma (minutos):', minutosHastaAlarma);
+            console.log('🔍 DEBUG - Tiempo hasta la alarma (horas):', horasHastaAlarma);
+            console.log('🔍 DEBUG - Es en el futuro:', fechaNotificacion > ahoraDebug);
+            
+            // Validar que la fecha sea futura (con margen de 30 segundos)
+            const margenSegundos = 30 * 1000; // 30 segundos en milisegundos
+            if (fechaNotificacion.getTime() <= (ahoraDebug.getTime() - margenSegundos)) {
+              console.warn('⚠️ Saltando notificación en el pasado para', dia);
+              console.warn('⚠️ Fecha calculada:', fechaNotificacion.toLocaleString('es-AR'));
+              console.warn('⚠️ Fecha actual:', ahoraDebug.toLocaleString('es-AR'));
+              continue;
             }
-          }
+            
+            console.log('✅ Programando alarma para la hora exacta seleccionada por el usuario');
+            console.log('📅 Fecha final de la alarma:', fechaNotificacion.toLocaleString('es-AR'));
+
+            try {
+              const medicamentoNombre = selectedPastilla?.nombre_comercial || programacionData.nombre_medicamento || "Medicamento";
+              const dosisInfo = programacionData.dosis_por_toma || "1 tableta";
+              
+              // Crear ID único por día y horario para evitar duplicados
+              const uniqueId = `${programacionId}_${dia}_${String(hora).padStart(2, '0')}${String(minuto).padStart(2, '0')}`;
+              
+              // Sin notificaciones - solo guardar alarma para pantalla directa
+              const alarmaId = uniqueId;
+              
+              console.log(
+                "✅ Alarma configurada para pantalla directa:", dia, ". ID:",
+                alarmaId
+              );
+              
+              alarmasProgramadas.push({
+                ...alarma,
+                alarmaId: alarmaId,
+                dia: dia,
+                fechaProgramada: fechaNotificacion.toISOString(),
+                medicamento: medicamentoNombre,
+                dosis: dosisInfo,
+                hora: `${String(hora).padStart(2, '0')}:${String(minuto).padStart(2, '0')}`,
+                sound: alarma.sound || "default"
+              });
+            } catch (error) {
+              console.error("❌ Error al programar notificación para", dia, ":", error);
+            }
+          } // Cerrar el bucle for de días
         } catch (error) {
-          console.error('❌ Error procesando alarma:', error);
+          console.error("❌ Error procesando alarma:", error);
         }
       }
-      
+
       return alarmasProgramadas;
     } catch (error) {
-      console.error('Error al programar alarmas:', error);
-      Alert.alert('Error', 'No se pudieron programar las alarmas.');
+      console.error("Error al programar alarmas:", error);
+      Alert.alert("Error", "No se pudieron programar las alarmas.");
       return [];
     }
   };
 
   // Crear programación
   const crearProgramacion = async () => {
+    // Prevenir ejecuciones múltiples simultáneas
+    if (loading) {
+      console.log('⚠️ Ya se está procesando una programación, ignorando...');
+      return;
+    }
+    
     setLoading(true);
 
     try {
+      // Configurar permisos completos antes de programar alarmas
+      console.log('🔐 Configurando permisos antes de crear tratamiento...');
+      const permissionsGranted = await setupAllPermissions();
+      
+      if (!permissionsGranted) {
+        console.warn('⚠️ Algunos permisos no fueron concedidos, pero continuando...');
+      }
+      
       // Programar las alarmas en el sistema de notificaciones
       const alarmasProgramadas = await programarAlarmas();
-      
+
       const diasSeleccionados = programacionData.dias_seleccionados || [];
       const horariosConfigurados = programacionData.horarios || [];
 
       // Función para formatear la hora en formato HH:mm
       const formatTime = (time) => {
-        if (!time) return '00:00';
-        
+        if (!time) return "00:00";
+
         // Si es un string en formato HH:mm, devolverlo directamente
-        if (typeof time === 'string' && time.match(/^\d{1,2}:\d{2}$/)) {
+        if (typeof time === "string" && time.match(/^\d{1,2}:\d{2}$/)) {
           return time;
         }
-        
+
         // Si es un objeto Date
         if (time instanceof Date) {
-          const hours = String(time.getHours()).padStart(2, '0');
-          const minutes = String(time.getMinutes()).padStart(2, '0');
+          const hours = String(time.getHours()).padStart(2, "0");
+          const minutes = String(time.getMinutes()).padStart(2, "0");
           return `${hours}:${minutes}`;
         }
-        
+
         // Si es un objeto con propiedades hours y minutes
-        if (time && typeof time === 'object' && 'hours' in time && 'minutes' in time) {
-          const hours = String(time.hours).padStart(2, '0');
-          const minutes = String(time.minutes).padStart(2, '0');
+        if (
+          time &&
+          typeof time === "object" &&
+          "hours" in time &&
+          "minutes" in time
+        ) {
+          const hours = String(time.hours).padStart(2, "0");
+          const minutes = String(time.minutes).padStart(2, "0");
           return `${hours}:${minutes}`;
         }
-        
-        return '00:00';
+
+        return "00:00";
       };
 
       // Preparar los datos de las alarmas para el envío
       const alarmasParaEnviar = alarms.map((alarma, index) => ({
         ...alarma,
-        // Incluir el ID de notificación programada si existe
-        notificationId: alarmasProgramadas[index]?.notificationId,
+        // Incluir el ID de alarma para pantalla directa si existe
+        alarmaId: alarmasProgramadas[index]?.alarmaId,
         hora: formatTime(alarma.time),
-        dias: alarma.days?.join(',') || '',
+        dias: alarma.days?.join(",") || "",
         activa: alarma.enabled || false,
-        sonido: alarma.sound || 'default',
-        vibrar: alarma.vibrate || false
+        sonido: alarma.sound || "default",
+        vibrar: alarma.vibrate || false,
       }));
 
       // Procesar horarios para eliminar duplicados
       const horariosUnicos = [];
       const horariosVistos = new Set();
-      
+
       // Primero normalizamos los horarios (quitamos segundos si existen)
-      const horariosNormalizados = horariosConfigurados.map(horario => ({
+      const horariosNormalizados = horariosConfigurados.map((horario) => ({
         ...horario,
-        hora: horario.hora.includes(':') ? 
-              horario.hora.split(':').slice(0, 2).join(':') : 
-              horario.hora
+        hora: horario.hora.includes(":")
+          ? horario.hora.split(":").slice(0, 2).join(":")
+          : horario.hora,
       }));
-      
+
       // Filtramos duplicados
-      horariosNormalizados.forEach(horario => {
+      horariosNormalizados.forEach((horario) => {
         if (!horariosVistos.has(horario.hora)) {
           horariosVistos.add(horario.hora);
           horariosUnicos.push(horario);
         }
       });
-      
+
       // Creamos los horarios para la API
       const horariosParaAPI = horariosUnicos.flatMap((horario) =>
         programacionData.dias_seleccionados.map((dia) => ({
@@ -878,9 +1016,9 @@ const Medicamentos = ({ navigation }) => {
           activo: 1,
         }))
       );
-      
-      console.log('Horarios únicos para guardar:', horariosUnicos);
-      console.log('Horarios para API:', horariosParaAPI);
+
+      console.log("Horarios únicos para guardar:", horariosUnicos);
+      console.log("Horarios para API:", horariosParaAPI);
 
       const dataToSend = {
         usuario_id: user.usuario_id,
@@ -888,7 +1026,7 @@ const Medicamentos = ({ navigation }) => {
         nombre_tratamiento:
           programacionData.nombre_tratamiento ||
           selectedPastilla.nombre_comercial,
-        fecha_inicio: new Date().toISOString().split("T")[0],
+        fecha_inicio: programacionData.fecha_inicio ? programacionData.fecha_inicio.toISOString().split("T")[0] : new Date().toISOString().split("T")[0], // Fecha actual por defecto
         fecha_fin: programacionData.fecha_fin
           ? programacionData.fecha_fin.toISOString().split("T")[0]
           : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
@@ -897,7 +1035,7 @@ const Medicamentos = ({ navigation }) => {
         dosis_por_toma: programacionData.dosis_por_toma,
         observaciones: "",
         horarios: horariosParaAPI,
-        alarmas: alarmasParaEnviar
+        alarmas: alarmasParaEnviar,
       };
 
       console.log("📤 Enviando datos:", dataToSend);
@@ -916,29 +1054,47 @@ const Medicamentos = ({ navigation }) => {
         console.log("📥 Respuesta del servidor:", response);
 
         // Verificar diferentes formatos de respuesta
-        if ((response.success || response.data?.success) && (response.data?.programacion_id || response.programacion_id)) {
-          const programacionId = response.data?.programacion_id || response.programacion_id;
-          const horariosCreados = response.data?.horarios_creados || response.horarios_creados || 0;
+        if (
+          (response.success || response.data?.success) &&
+          (response.data?.programacion_id || response.programacion_id)
+        ) {
+          const programacionId =
+            response.data?.programacion_id || response.programacion_id;
+          const horariosCreados =
+            response.data?.horarios_creados || response.horarios_creados || 0;
           let mensaje = `¡Tratamiento programado exitosamente con ${horariosCreados} horarios!`;
+
+          // PROGRAMAR LAS NOTIFICACIONES DESPUÉS DE CREAR EL TRATAMIENTO
+          console.log("📅 Programando notificaciones para el tratamiento creado...");
+          await programarNotificacionesTratamiento({
+            programacionId,
+            nombreTratamiento: programacionData.nombre_tratamiento || selectedPastilla.nombre_comercial,
+            horarios: horariosParaAPI,
+            fechaInicio: dataToSend.fecha_inicio, // USAR LA FECHA DE INICIO REAL DEL TRATAMIENTO
+            dosisPorToma: programacionData.dosis_por_toma
+          });
 
           // Mostrar mensaje de éxito
           Alert.alert("Éxito", mensaje);
-          
+
           // Cerrar el modal y limpiar el formulario
           setModalVisible(false);
           resetearFormulario();
-          
+
           // Forzar recarga de programaciones
           console.log("🔄 Recargando lista de programaciones...");
           await cargarProgramaciones();
-          
+
           // También recargar las tomas de hoy
           await cargarTomasHoy();
-          
+
           console.log("✅ Lista de programaciones actualizada");
         } else {
           // Mostrar mensaje de error detallado
-          const errorMessage = response.data?.error || response.error || "Error desconocido al crear el tratamiento";
+          const errorMessage =
+            response.data?.error ||
+            response.error ||
+            "Error desconocido al crear el tratamiento";
           console.error("Error al crear programación:", errorMessage);
           Alert.alert("Error", errorMessage);
         }
@@ -947,6 +1103,102 @@ const Medicamentos = ({ navigation }) => {
       alert("Error de conexión: " + error.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Función para programar notificaciones después de crear un tratamiento
+  const programarNotificacionesTratamiento = async ({
+    programacionId,
+    nombreTratamiento,
+    horarios,
+    fechaInicio,
+    dosisPorToma
+  }) => {
+    try {
+      console.log("📅 Iniciando programación de notificaciones...");
+      console.log("📅 Programación ID:", programacionId);
+      console.log("📅 Nombre tratamiento:", nombreTratamiento);
+      console.log("📅 Horarios a programar:", horarios);
+      console.log("📅 Fecha inicio:", fechaInicio);
+      console.log("📅 Dosis por toma:", dosisPorToma);
+
+      const fechaInicioDate = new Date(fechaInicio);
+      const ahora = new Date();
+      
+      // Mapeo de días de la semana
+      const nombresDias = {
+        'lunes': 1, 'martes': 2, 'miercoles': 3, 'jueves': 4,
+        'viernes': 5, 'sabado': 6, 'domingo': 0
+      };
+
+      let notificacionesProgramadas = 0;
+
+      for (const horario of horarios) {
+        const { dia_semana, hora, dosis } = horario;
+        
+        console.log(`📅 Procesando: ${dia_semana} a las ${hora}`);
+        
+        // Obtener el número del día de la semana
+        const numeroDia = nombresDias[dia_semana.toLowerCase()];
+        if (numeroDia === undefined) {
+          console.warn(`⚠️ Día no reconocido: ${dia_semana}`);
+          continue;
+        }
+
+        // VALIDACIÓN CRÍTICA: Solo programar si corresponde al día y horario según fecha de inicio
+        const fechaInicioDay = fechaInicioDate.getDay();
+        const [horaInicio, minutoInicio] = hora.split(':');
+        
+        // Crear fecha de referencia para este día y hora específicos
+        const fechaReferencia = new Date(fechaInicioDate);
+        fechaReferencia.setHours(parseInt(horaInicio), parseInt(minutoInicio), 0, 0);
+        
+        // Verificar si este día de la semana corresponde con la fecha de inicio del tratamiento
+        let fechaNotificacion = new Date(fechaReferencia);
+        
+        // Si el día del horario no coincide con el día de inicio, calcular la próxima ocurrencia
+        if (numeroDia !== fechaInicioDay) {
+          const diasDiferencia = (numeroDia - fechaInicioDay + 7) % 7;
+          fechaNotificacion.setDate(fechaReferencia.getDate() + diasDiferencia);
+        }
+        
+        // Si la fecha calculada ya pasó, programar para la próxima semana
+        if (fechaNotificacion <= ahora) {
+          fechaNotificacion.setDate(fechaNotificacion.getDate() + 7);
+        }
+        
+        // VALIDACIÓN ADICIONAL: No programar si falta menos de 5 minutos (evitar notificaciones inmediatas)
+        const tiempoHastaNotificacion = fechaNotificacion.getTime() - ahora.getTime();
+        if (tiempoHastaNotificacion < 5 * 60 * 1000) { // Menos de 5 minutos
+          console.log(`⚠️ Notificación muy próxima (${Math.round(tiempoHastaNotificacion / (1000 * 60))} min), programando para la próxima semana: ${dia_semana} ${hora}`);
+          fechaNotificacion.setDate(fechaNotificacion.getDate() + 7);
+        }
+
+        console.log(`📅 Fecha calculada para ${dia_semana} ${hora}:`, fechaNotificacion.toLocaleString('es-AR'));
+        console.log(`📅 Tiempo hasta notificación: ${Math.round((fechaNotificacion.getTime() - ahora.getTime()) / (1000 * 60))} minutos`);
+
+        // Solo guardar alarma para pantalla directa si la fecha es válida
+        if (fechaNotificacion > ahora) {
+          const alarmaId = `tratamiento_${programacionId}_${dia_semana}_${hora.replace(':', '')}`;
+          
+          // Guardar alarma para mostrar pantalla directa (sin notificación)
+          console.log(`✅ Alarma configurada para pantalla directa: ${alarmaId}`);
+          notificacionesProgramadas++;
+        } else {
+          console.error(`❌ Fecha no válida para ${dia_semana} ${hora}`);
+        }
+      }
+
+      console.log(`✅ Total de notificaciones programadas: ${notificacionesProgramadas}/${horarios.length}`);
+      
+      if (notificacionesProgramadas > 0) {
+        console.log(`🎉 Tratamiento "${nombreTratamiento}" programado exitosamente con ${notificacionesProgramadas} notificaciones`);
+      } else {
+        console.warn(`⚠️ No se pudieron programar notificaciones para el tratamiento "${nombreTratamiento}"`);
+      }
+
+    } catch (error) {
+      console.error("❌ Error programando notificaciones del tratamiento:", error);
     }
   };
 
@@ -988,36 +1240,44 @@ const Medicamentos = ({ navigation }) => {
     // Obtener horarios únicos sin duplicados
     const horariosUnicos = [];
     const horariosVistos = new Set();
-    
-    const horariosProcesados = Array.isArray(programacion.horarios) ? programacion.horarios : [];
-    
+
+    const horariosProcesados = Array.isArray(programacion.horarios)
+      ? programacion.horarios
+      : [];
+
     // Procesar horarios para obtener solo los únicos
-    horariosProcesados.forEach(horario => {
-      const hora = horario.hora ? horario.hora.split(':').slice(0, 2).join(':') : '';
+    horariosProcesados.forEach((horario) => {
+      const hora = horario.hora
+        ? horario.hora.split(":").slice(0, 2).join(":")
+        : "";
       const clave = hora; // Usamos solo la hora como clave única
-      
+
       if (hora && !horariosVistos.has(clave)) {
         horariosVistos.add(clave);
         horariosUnicos.push({
           hora: hora,
-          dosis: horario.dosis || 1
+          dosis: horario.dosis || 1,
         });
       }
     });
 
     console.log("Horarios únicos:", horariosUnicos);
-    
+
     // Obtener días seleccionados únicos
     const diasSeleccionados = [
-      ...new Set(horariosProcesados.map(h => h.dia_semana || h.dia || h.dias).filter(Boolean))
+      ...new Set(
+        horariosProcesados
+          .map((h) => h.dia_semana || h.dia || h.dias)
+          .filter(Boolean)
+      ),
     ];
-    
+
     console.log("Días seleccionados:", diasSeleccionados);
-    
+
     // Crear formato para el estado
-    const horariosFormato = horariosUnicos.map(horario => ({
+    const horariosFormato = horariosUnicos.map((horario) => ({
       hora: horario.hora,
-      dosis: horario.dosis
+      dosis: horario.dosis,
     }));
 
     setProgramacionData({
@@ -1054,23 +1314,23 @@ const Medicamentos = ({ navigation }) => {
       // Procesar horarios para eliminar duplicados
       const horariosUnicos = [];
       const horariosVistos = new Set();
-      
+
       // Primero normalizamos los horarios (quitamos segundos si existen)
-      const horariosNormalizados = horariosConfigurados.map(horario => ({
+      const horariosNormalizados = horariosConfigurados.map((horario) => ({
         ...horario,
-        hora: horario.hora.includes(':') ? 
-              horario.hora.split(':').slice(0, 2).join(':') : 
-              horario.hora
+        hora: horario.hora.includes(":")
+          ? horario.hora.split(":").slice(0, 2).join(":")
+          : horario.hora,
       }));
-      
+
       // Filtramos duplicados
-      horariosNormalizados.forEach(horario => {
+      horariosNormalizados.forEach((horario) => {
         if (!horariosVistos.has(horario.hora)) {
           horariosVistos.add(horario.hora);
           horariosUnicos.push(horario);
         }
       });
-      
+
       // Creamos los horarios para la API
       const horariosParaAPI = horariosUnicos.flatMap((horario) =>
         programacionData.dias_seleccionados.map((dia) => ({
@@ -1080,9 +1340,9 @@ const Medicamentos = ({ navigation }) => {
           activo: 1,
         }))
       );
-      
-      console.log('Horarios únicos para guardar:', horariosUnicos);
-      console.log('Horarios para API:', horariosParaAPI);
+
+      console.log("Horarios únicos para guardar:", horariosUnicos);
+      console.log("Horarios para API:", horariosParaAPI);
 
       console.log("📊 Cálculo de horarios:");
       console.log("📊 Horarios configurados:", horariosConfigurados.length);
@@ -1244,48 +1504,85 @@ const Medicamentos = ({ navigation }) => {
 
   // Función para renderizar cuando la lista está vacía
   const renderEmptyComponent = () => {
-    console.log('🔍 Mostrando componente vacío. Estado actual:', {
+    console.log("🔍 Mostrando componente vacío. Estado actual:", {
       loading,
       error,
       pastillasLength: pastillas.length,
       filteredPastillasLength: filteredPastillas.length,
-      searchText
+      searchText,
     });
-    
+
     return (
-      <View style={[styles.emptyContainer, { justifyContent: 'center', padding: 20 }]}>
-        <MaterialIcons name="medication" size={64} color="#7A2C34" style={styles.emptyIcon} />
-        
+      <View
+        style={[
+          styles.emptyContainer,
+          { justifyContent: "center", padding: 20 },
+        ]}
+      >
+        <MaterialIcons
+          name="medication"
+          size={64}
+          color="#7A2C34"
+          style={styles.emptyIcon}
+        />
+
         {loading ? (
           <>
             <Text style={styles.emptyText}>Cargando medicamentos...</Text>
-            <ActivityIndicator size="large" color="#7A2C34" style={{ marginTop: 20 }} />
+            <ActivityIndicator
+              size="large"
+              color="#7A2C34"
+              style={{ marginTop: 20 }}
+            />
           </>
         ) : error ? (
           <>
-            <Text style={[styles.emptyText, {color: '#ff6b6b'}]}>Error al cargar los medicamentos</Text>
-            <Text style={[styles.emptySubtext, { textAlign: 'center', marginTop: 10 }]}>{error}</Text>
+            <Text style={[styles.emptyText, { color: "#ff6b6b" }]}>
+              Error al cargar los medicamentos
+            </Text>
+            <Text
+              style={[
+                styles.emptySubtext,
+                { textAlign: "center", marginTop: 10 },
+              ]}
+            >
+              {error}
+            </Text>
           </>
         ) : searchText && filteredPastillas.length === 0 ? (
           <>
-            <Text style={styles.emptyText}>No se encontraron coincidencias</Text>
-            <Text style={[styles.emptySubtext, { textAlign: 'center', marginTop: 10 }]}>
+            <Text style={styles.emptyText}>
+              No se encontraron coincidencias
+            </Text>
+            <Text
+              style={[
+                styles.emptySubtext,
+                { textAlign: "center", marginTop: 10 },
+              ]}
+            >
               No hay medicamentos que coincidan con "{searchText}"
             </Text>
           </>
         ) : pastillas.length === 0 ? (
           <>
-            <Text style={styles.emptyText}>No hay medicamentos disponibles</Text>
-            <Text style={[styles.emptySubtext, { textAlign: 'center', marginTop: 10 }]}>
+            <Text style={styles.emptyText}>
+              No hay medicamentos disponibles
+            </Text>
+            <Text
+              style={[
+                styles.emptySubtext,
+                { textAlign: "center", marginTop: 10 },
+              ]}
+            >
               No se encontraron medicamentos en la base de datos
             </Text>
           </>
         ) : (
           <Text style={styles.emptyText}>No hay medicamentos para mostrar</Text>
         )}
-        
+
         {!loading && (
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[styles.retryButton, { marginTop: 20 }]}
             onPress={cargarPastillas}
           >
@@ -1300,104 +1597,65 @@ const Medicamentos = ({ navigation }) => {
   // Renderizar item de pastilla
   const renderPastillaItem = ({ item }) => {
     if (!item) return null;
-    
-    // Debug: Mostrar la estructura completa del ítem
-    console.log('🔍 Estructura del ítem:', JSON.stringify(item, null, 2));
-    
+
     // Normalizar los datos del ítem para manejar diferentes estructuras
     const medicamento = {
-      id: item.remedio_global_id || item.id || Math.random().toString(36).substr(2, 9),
-      nombre: (item.nombre_comercial || item.nombre || 'Sin nombre').trim(),
-      descripcion: (item.descripcion || '').trim(),
-      presentacion: (item.presentacion || 'Sin presentación').trim(),
-      peso_unidad: (item.peso_unidad || 'N/A').toString().trim(),
-      tipo: (item.tipo_tratamiento || item.tipo || '').trim(),
-      // Agregar más campos según sea necesario
-      ...item // Mantener el objeto original completo
+      id:
+        item.remedio_global_id ||
+        item.id ||
+        Math.random().toString(36).substr(2, 9),
+      nombre: (item.nombre_comercial || item.nombre || "Sin nombre").trim(),
+      presentacion: (item.presentacion || "").trim(),
+      peso_unidad: (item.peso_unidad || "").toString().trim(),
+      laboratorio: (item.laboratorio || "").trim(),
+      ...item, // Mantener el objeto original completo
     };
-    
-    // Determinar si mostrar la unidad de medida (ej: mg)
-    const mostrarUnidad = medicamento.peso_unidad && 
-                         medicamento.peso_unidad !== 'N/A' && 
-                         !isNaN(parseFloat(medicamento.peso_unidad));
-    
+
+    // Formatear el peso si está disponible
+    const mostrarPeso =
+      medicamento.peso_unidad &&
+      medicamento.peso_unidad !== "N/A" &&
+      !isNaN(parseFloat(medicamento.peso_unidad));
+    const pesoFormateado = mostrarPeso
+      ? `${parseFloat(medicamento.peso_unidad).toLocaleString()} mg`
+      : "";
+
+    // Obtener descripción del medicamento (si existe)
+    const descripcion =
+      medicamento.descripcion || medicamento.indicaciones || "";
+
     return (
       <TouchableOpacity
-        style={[
-          styles.pastillaItem,
-          editandoProgramacion && styles.pastillaItemDisabled,
-          { opacity: editandoProgramacion ? 0.6 : 1 }
-        ]}
-        onPress={() => {
-          console.log('👉 Pastilla seleccionada:', medicamento.nombre);
-          seleccionarPastilla(medicamento);
-        }}
+        style={styles.pastillaCard}
+        onPress={() => seleccionarPastilla(medicamento)}
         onLongPress={() => mostrarDetallesPastilla(medicamento)}
         delayLongPress={500}
-        disabled={!!editandoProgramacion}
         activeOpacity={0.7}
       >
-        <View style={styles.pastillaInfo}>
-          {/* Encabezado con nombre y tipo */}
-          <View style={styles.pastillaHeader}>
-            <Text style={styles.pastillaNombre} numberOfLines={1}>
+        <View style={styles.pastillaCardContent}>
+          <View style={styles.pastillaCardHeader}>
+            <Text style={styles.pastillaCardNombre} numberOfLines={1}>
               {medicamento.nombre}
             </Text>
-            {medicamento.tipo ? (
-              <View style={[
-                styles.pastillaTipo,
-                !medicamento.tipo && { display: 'none' }
-              ]}>
-                <Text style={styles.pastillaTipoText} numberOfLines={1}>
-                  {medicamento.tipo}
-                </Text>
-              </View>
-            ) : null}
+            <MaterialIcons
+              name="keyboard-arrow-right"
+              size={24}
+              color="#9CA3AF"
+            />
           </View>
-          
-          {/* Descripción (si existe) */}
-          {medicamento.descripcion ? (
-            <Text 
-              style={styles.pastillaDescripcion} 
-              numberOfLines={2}
-              ellipsizeMode="tail"
-            >
-              {medicamento.descripcion}
+
+          {descripcion ? (
+            <Text style={styles.pastillaCardDescripcion} numberOfLines={1}>
+              {descripcion}
             </Text>
           ) : null}
-          
-          {/* Detalles de presentación y peso */}
-          <View style={styles.pastillaDetails}>
-            {medicamento.presentacion && medicamento.presentacion !== 'Sin presentación' && (
-              <Text 
-                style={styles.pastillaPresentacion} 
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {medicamento.presentacion}
-              </Text>
-            )}
-            
-            {mostrarUnidad && (
-              <Text style={styles.pastillaPeso}>
-                {parseFloat(medicamento.peso_unidad).toLocaleString()} mg
-              </Text>
-            )}
-          </View>
-          
-          {/* Indicador de acción */}
-          <Text style={styles.longPressHint}>
+
+          {/* Se elimina presentación y peso a pedido del usuario */}
+
+          <Text style={styles.pastillaCardInstruction}>
             Mantén presionado para ver detalles
           </Text>
         </View>
-        
-        {/* Ícono de flecha */}
-        <MaterialIcons 
-          name="chevron-right" 
-          size={24} 
-          color="#7A2C34" 
-          style={styles.pastillaArrow}
-        />
       </TouchableOpacity>
     );
   };
@@ -1405,7 +1663,7 @@ const Medicamentos = ({ navigation }) => {
   // Renderizar header del modal con progreso (simplificado)
   const renderModalHeader = () => (
     <View style={styles.modalHeader}>
-      <View style={styles.progressContainer}>
+      <View style={{ flex: 1 }}>
         <View style={styles.modalTitleContainer}>
           <MaterialIcons
             name={editandoProgramacion ? "edit" : "add-circle"}
@@ -1435,6 +1693,13 @@ const Medicamentos = ({ navigation }) => {
           />
         </View>
       </View>
+      <TouchableOpacity
+        onPress={() => setModalVisible(false)}
+        style={styles.closeButton}
+        accessibilityLabel="Cerrar"
+      >
+        <MaterialIcons name="close" size={20} color="#7A2C34" />
+      </TouchableOpacity>
     </View>
   );
 
@@ -1445,11 +1710,7 @@ const Medicamentos = ({ navigation }) => {
     return (
       <View style={styles.searchContainer}>
         <View style={styles.searchInputContainer}>
-          <MaterialIcons
-            name="search"
-            size={20}
-            color="#7A2C34"
-          />
+          <MaterialIcons name="search" size={20} color="#7A2C34" />
           <TextInput
             style={styles.searchInput}
             placeholder="Buscar pastilla..."
@@ -1477,50 +1738,47 @@ const Medicamentos = ({ navigation }) => {
     if (currentStep !== 3) return null;
 
     const diasSemana = [
-      { key: "lunes", label: "Lun", fullLabel: "Lunes", icon: "calendar-week" },
+      { key: "lunes", label: "Lun", fullLabel: "Lunes", icon: "event-note" },
       {
         key: "martes",
         label: "Mar",
         fullLabel: "Martes",
-        icon: "calendar-week",
+        icon: "event-note",
       },
       {
         key: "miercoles",
         label: "Mié",
         fullLabel: "Miércoles",
-        icon: "calendar-week",
+        icon: "event-note",
       },
       {
         key: "jueves",
         label: "Jue",
         fullLabel: "Jueves",
-        icon: "calendar-week",
+        icon: "event-note",
       },
       {
         key: "viernes",
         label: "Vie",
         fullLabel: "Viernes",
-        icon: "calendar-week",
+        icon: "event-note",
       },
       {
         key: "sabado",
         label: "Sáb",
         fullLabel: "Sábado",
-        icon: "calendar-weekend",
+        icon: "calendar-today",
       },
       {
         key: "domingo",
         label: "Dom",
         fullLabel: "Domingo",
-        icon: "calendar-weekend",
+        icon: "calendar-today",
       },
     ];
 
     const diasSeleccionados = programacionData.dias_seleccionados || [];
-    console.log(
-      " Renderizando días - días seleccionados:",
-      diasSeleccionados
-    );
+    console.log(" Renderizando días - días seleccionados:", diasSeleccionados);
     console.log(" Estado completo de programacionData:", programacionData);
 
     return (
@@ -1539,11 +1797,7 @@ const Medicamentos = ({ navigation }) => {
         {/* Sección de días */}
         <View style={styles.diasSection}>
           <View style={styles.sectionHeader}>
-            <MaterialIcons
-              name="event-note"
-              size={20}
-              color="#7A2C34"
-            />
+            <MaterialIcons name="event-note" size={20} color="#7A2C34" />
             <Text style={styles.sectionTitle}>Selecciona los días</Text>
           </View>
           <Text style={styles.sectionDescription}>
@@ -1593,11 +1847,7 @@ const Medicamentos = ({ navigation }) => {
         {/* Resumen de selección */}
         {diasSeleccionados.length > 0 && (
           <View style={styles.selectionSummary}>
-            <MaterialIcons
-              name="check-circle"
-              size={20}
-              color="#28a745"
-            />
+            <MaterialIcons name="check-circle" size={20} color="#28a745" />
             <Text style={styles.selectionSummaryText}>
               {diasSeleccionados.length} día
               {diasSeleccionados.length !== 1 ? "s" : ""} seleccionado
@@ -1629,8 +1879,8 @@ const Medicamentos = ({ navigation }) => {
     return (
       <View style={styles.configuracionContainer}>
         {/* Información del medicamento */}
-         {/* Header con información del medicamento */}
-         <View style={styles.stepHeader}>
+        {/* Header con información del medicamento */}
+        <View style={styles.stepHeader}>
           <MaterialIcons name="medication" size={24} color="#7A2C34" />
           <View style={styles.stepHeaderContent}>
             <Text style={styles.stepHeaderTitle}>Medicamento seleccionado</Text>
@@ -1656,11 +1906,7 @@ const Medicamentos = ({ navigation }) => {
         {/* Horarios configurados */}
         <View style={styles.horariosContainer}>
           <View style={styles.horariosTitleContainer}>
-            <MaterialIcons
-              name="access-time"
-              size={35}
-              color="#7A2C34"
-            />
+            <MaterialIcons name="access-time" size={35} color="#7A2C34" />
             <Text style={styles.horariosTitle}>Horarios programados</Text>
           </View>
           {horariosConfigurados.length > 0 ? (
@@ -1669,52 +1915,50 @@ const Medicamentos = ({ navigation }) => {
                 Selecciona un horario para editarlo o elimínalo si es necesario.
               </Text>
               <View style={styles.horariosListContainer}>
-              {horariosConfigurados.map((horario, index) => (
-                <View key={index} style={styles.horarioCard}>
-                  <View style={styles.horarioLeftBorder} />
-                  <TouchableOpacity
-                    style={styles.horaButton}
-                    onPress={() => {
-                      setShowTimePicker(true);
-                      setHorarioEditando(index);
-                    }}
-                    accessibilityLabel={`Editar horario ${index + 1}`}
-                  >
-                    <View style={styles.horarioContent}>
+                {horariosConfigurados.map((horario, index) => (
+                  <View key={index} style={styles.horarioCard}>
+                    <View style={styles.horarioLeftBorder} />
+                    <TouchableOpacity
+                      style={styles.horaButton}
+                      onPress={() => {
+                        setShowTimePicker(true);
+                        setHorarioEditando(index);
+                      }}
+                      accessibilityLabel={`Editar horario ${index + 1}`}
+                    >
+                      <View style={styles.horarioContent}>
+                        <MaterialIcons
+                          name="access-time"
+                          size={24}
+                          color="#7A2C34"
+                        />
+                        <Text style={styles.horarioHora}>{horario.hora}</Text>
+                      </View>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.deleteButton}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        eliminarHorario(index);
+                      }}
+                      accessibilityLabel={`Eliminar horario ${index + 1}`}
+                    >
                       <MaterialIcons
-                        name="access-time"
-                        size={24}
+                        name="delete-outline"
+                        size={40}
                         color="#7A2C34"
                       />
-                      <Text style={styles.horarioHora}>{horario.hora}</Text>
-                    </View>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.deleteButton}
-                    onPress={(e) => {
-                      e.stopPropagation();
-                      eliminarHorario(index);
-                    }}
-                    accessibilityLabel={`Eliminar horario ${index + 1}`}
-                  >
-                    <MaterialIcons
-                      name="delete-outline"
-                      size={40}
-                      color="#7A2C34"
-                    />
-                  </TouchableOpacity>
-                </View>
-              ))}
+                    </TouchableOpacity>
+                  </View>
+                ))}
               </View>
             </>
           ) : (
             <View style={styles.noHorariosContainer}>
-              <MaterialIcons
-                name="access-time"
-                size={48}
-                color="#cbd5e0"
-              />
-              <Text style={styles.noHorariosText}>No hay horarios configurados</Text>
+              <MaterialIcons name="access-time" size={48} color="#cbd5e0" />
+              <Text style={styles.noHorariosText}>
+                No hay horarios configurados
+              </Text>
               <Text style={styles.noHorariosSubtext}>
                 Agrega al menos un horario para continuar
               </Text>
@@ -1753,11 +1997,11 @@ const Medicamentos = ({ navigation }) => {
       id: null,
       time: new Date(`2000-01-01T${programacionData.horarios[index].hora}`),
       enabled: true,
-      sound: 'default',
+      sound: "default",
       vibrate: true,
-      volume: 80,
+      volume: 100, // Aumentado para mayor volumen
       name: `Alarma ${index + 1}`,
-      days: programacionData.dias_seleccionados || []
+      days: programacionData.dias_seleccionados || [],
     };
   };
 
@@ -1768,86 +2012,122 @@ const Medicamentos = ({ navigation }) => {
         <View style={styles.stepHeader}>
           <Text style={styles.stepTitle}>Configuración de notificaciones</Text>
           <Text style={styles.stepSubtitle}>
-            Activa o desactiva las notificaciones para cada horario
+            Configura las alarmas para cada horario programado
           </Text>
         </View>
 
-        <View style={styles.alarmsContainer}>
-          {programacionData.horarios && programacionData.horarios.length > 0 ? (
-            programacionData.horarios.map((horario, index) => {
-              const alarm = alarms[index] || {
-                id: null,
-                time: new Date(`2000-01-01T${horario.hora}`),
-                enabled: true,
-                sound: 'default',
-                vibrate: true,
-                volume: 80,
-                name: `Alarma ${index + 1}`
-              };
+        <View style={styles.alarmConfigContainer}>
 
-              return (
-                <View key={index} style={[
-                  styles.alarmItem,
-                  !alarm.enabled && styles.alarmItemDisabled
-                ]}>
-                  <TouchableOpacity 
-                    style={styles.alarmContent}
-                    onPress={() => showSoundPicker(index)}
-                    activeOpacity={0.7}
+          <View style={styles.alarmsContainer}>
+            {programacionData.horarios && programacionData.horarios.length > 0 ? (
+              programacionData.horarios.map((horario, index) => {
+                const alarm = alarms[index] || {
+                  id: null,
+                  time: new Date(`2000-01-01T${horario.hora}`),
+                  enabled: true,
+                  sound: "default",
+                  vibrate: true,
+                  volume: 100, // Aumentado para mayor volumen
+                  name: `Alarma ${index + 1}`,
+                };
+
+                return (
+                  <View
+                    key={index}
+                    style={[
+                      styles.alarmItem,
+                      !alarm.enabled && styles.alarmItemDisabled,
+                    ]}
                   >
-                    <View style={styles.alarmTimeContainer}>
-                      <View style={styles.alarmTimeRow}>
-                        <Text style={styles.alarmTime}>
-                          {new Date(`2000-01-01T${horario.hora}`).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </Text>
-                        <View style={styles.soundIndicator}>
-                          <MaterialIcons 
-                            name={alarm.sound === 'alarm' ? 'alarm' : alarm.sound === 'tone' ? 'music-note' : 'notifications-none'} 
-                            size={16} 
-                            color={alarm.enabled ? '#7A2C34' : '#999'} 
-                          />
+                    <TouchableOpacity
+                      style={styles.alarmContent}
+                      onPress={() => showSoundPicker(index)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={styles.alarmTimeContainer}>
+                        <View style={styles.alarmTimeRow}>
+                          <Text style={styles.alarmTime}>
+                            {new Date(
+                              `2000-01-01T${horario.hora}`
+                            ).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </Text>
+                          <View style={styles.soundIndicator}>
+                            <MaterialIcons
+                              name={
+                                alarm.sound === "alarm"
+                                  ? "alarm"
+                                  : alarm.sound === "tone"
+                                  ? "music-note"
+                                  : "notifications-none"
+                              }
+                              size={16}
+                              color={alarm.enabled ? "#7A2C34" : "#999"}
+                            />
+                          </View>
                         </View>
+                        <Text style={styles.alarmDias}>
+                          {programacionData.dias_seleccionados
+                            ? programacionData.dias_seleccionados
+                                .map(
+                                  (dia) =>
+                                    [
+                                      "Dom",
+                                      "Lun",
+                                      "Mar",
+                                      "Mié",
+                                      "Jue",
+                                      "Vie",
+                                      "Sáb",
+                                    ][dia]
+                                )
+                                .join(", ")
+                            : ""}
+                        </Text>
                       </View>
-                      <Text style={styles.alarmDias}>
-                        {programacionData.dias_seleccionados
-                          ? programacionData.dias_seleccionados
-                              .map(dia => ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'][dia])
-                              .join(', ')
-                          : ''}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                  
-                  <Switch
-                    value={alarm.enabled}
-                    onValueChange={(value) => {
-                      const newAlarms = [...alarms];
-                      if (!newAlarms[index]) {
-                        newAlarms[index] = {
-                          ...alarm,
-                          enabled: value,
-                          time: new Date(`2000-01-01T${horario.hora}`),
-                          days: programacionData.dias_seleccionados || []
-                        };
-                      } else {
-                        newAlarms[index].enabled = value;
-                      }
-                      setAlarms(newAlarms);
-                      handleAlarmsChange(newAlarms);
-                    }}
-                    trackColor={{ false: '#E0E0E0', true: '#7A2C34' }}
-                    thumbColor="white"
-                  />
-                </View>
-              );
-            })
-          ) : (
-            <View style={styles.noAlarmsContainer}>
-              <MaterialIcons name="notifications-off" size={48} color="#CCCCCC" />
-              <Text style={styles.noAlarmsText}>No hay horarios configurados</Text>
-              <Text style={styles.noAlarmsSubtext}>Vuelve al paso anterior para configurar los horarios</Text>
-            </View>
-          )}
+                    </TouchableOpacity>
+
+                    <Switch
+                      value={alarm.enabled}
+                      onValueChange={(value) => {
+                        const newAlarms = [...alarms];
+                        if (!newAlarms[index]) {
+                          newAlarms[index] = {
+                            ...alarm,
+                            enabled: value,
+                            time: new Date(`2000-01-01T${horario.hora}`),
+                            days: programacionData.dias_seleccionados || [],
+                          };
+                        } else {
+                          newAlarms[index].enabled = value;
+                        }
+                        setAlarms(newAlarms);
+                        handleAlarmsChange(newAlarms);
+                      }}
+                      trackColor={{ false: "#E0E0E0", true: "#7A2C34" }}
+                      thumbColor="white"
+                    />
+                  </View>
+                );
+              })
+            ) : (
+              <View style={styles.noAlarmsContainer}>
+                <MaterialIcons
+                  name="notifications-off"
+                  size={48}
+                  color="rgba(122, 44, 52, 0.5)"
+                />
+                <Text style={styles.noAlarmsText}>
+                  No hay horarios configurados
+                </Text>
+                <Text style={styles.noAlarmsSubtext}>
+                  Vuelve al paso anterior para configurar los horarios
+                </Text>
+              </View>
+            )}
+          </View>
         </View>
       </View>
     );
@@ -1858,107 +2138,152 @@ const Medicamentos = ({ navigation }) => {
     if (currentStep !== 6) return null;
 
     return (
-      <View style={{flex: 1, backgroundColor: '#f8f9fa'}}>
-        <ScrollView 
-          style={{flex: 1}}
+      <View style={{ flex: 1, backgroundColor: "#f8f9fa" }}>
+        <ScrollView
+          style={{ flex: 1 }}
           contentContainerStyle={{
             padding: 16,
             paddingBottom: 80, // Reducido para que no quede espacio en blanco
-            flexGrow: 0 // Evita que el contenido se expanda más allá del espacio necesario
+            flexGrow: 0, // Evita que el contenido se expanda más allá del espacio necesario
           }}
           showsVerticalScrollIndicator={true}
         >
           {/* Tarjeta de Encabezado */}
-          <View style={{
-            backgroundColor: '#7A2C34',
-            borderRadius: 12,
-            padding: 20,
-            alignItems: 'center',
-            marginBottom: 16
-          }}>
-            <View style={{
-              backgroundColor: 'rgba(255, 255, 255, 0.2)',
-              width: 60,
-              height: 60,
-              borderRadius: 30,
-              justifyContent: 'center',
-              alignItems: 'center',
-              marginBottom: 12
-            }}>
+          <View
+            style={{
+              backgroundColor: "#7A2C34",
+              borderRadius: 12,
+              padding: 20,
+              alignItems: "center",
+              marginBottom: 16,
+            }}
+          >
+            <View
+              style={{
+                backgroundColor: "rgba(255, 255, 255, 0.2)",
+                width: 60,
+                height: 60,
+                borderRadius: 30,
+                justifyContent: "center",
+                alignItems: "center",
+                marginBottom: 12,
+              }}
+            >
               <MaterialIcons name="check-circle" size={32} color="#fff" />
             </View>
-            <Text style={{
-              fontSize: 20,
-              fontWeight: 'bold',
-              color: '#fff',
-              marginBottom: 8,
-              textAlign: 'center'
-            }}>
-              {editandoProgramacion ? 'Resumen de cambios' : 'Resumen del Tratamiento'}
+            <Text
+              style={{
+                fontSize: 20,
+                fontWeight: "bold",
+                color: "#fff",
+                marginBottom: 8,
+                textAlign: "center",
+              }}
+            >
+              {editandoProgramacion
+                ? "Resumen de cambios"
+                : "Resumen del Tratamiento"}
             </Text>
-            <Text style={{
-              fontSize: 15,
-              color: 'rgba(255, 255, 255, 0.9)',
-              textAlign: 'center'
-            }}>
-              {editandoProgramacion 
-                ? 'Revisa los cambios antes de actualizar' 
-                : 'Revisa todos los detalles del tratamiento'}
+            <Text
+              style={{
+                fontSize: 15,
+                color: "rgba(255, 255, 255, 0.9)",
+                textAlign: "center",
+              }}
+            >
+              {editandoProgramacion
+                ? "Revisa los cambios antes de actualizar"
+                : "Revisa todos los detalles del tratamiento"}
             </Text>
           </View>
 
           {/* Tarjeta de Información */}
-          <View style={{
-            backgroundColor: '#fff',
-            borderRadius: 12,
-            padding: 16,
-            marginBottom: 16,
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 1 },
-            shadowOpacity: 0.1,
-            shadowRadius: 3,
-            elevation: 2
-          }}>
+          <View
+            style={{
+              backgroundColor: "#fff",
+              borderRadius: 12,
+              padding: 16,
+              marginBottom: 16,
+              shadowColor: "#000",
+              shadowOffset: { width: 0, height: 1 },
+              shadowOpacity: 0.1,
+              shadowRadius: 3,
+              elevation: 2,
+            }}
+          >
             {/* Información del medicamento */}
             {/* Header con información del medicamento */}
-        <View style={styles.stepHeader}>
-          <MaterialIcons name="medication" size={24} color="#7A2C34" />
-          <View style={styles.stepHeaderContent}>
-            <Text style={styles.stepHeaderTitle}>Medicamento seleccionado</Text>
-            <Text style={styles.stepHeaderSubtitle}>
-              {selectedPastilla?.nombre_comercial}
-            </Text>
-          </View>
-        </View>
+            <View style={styles.stepHeader}>
+              <MaterialIcons name="medication" size={24} color="#7A2C34" />
+              <View style={styles.stepHeaderContent}>
+                <Text style={styles.stepHeaderTitle}>
+                  Medicamento seleccionado
+                </Text>
+                <Text style={styles.stepHeaderSubtitle}>
+                  {selectedPastilla?.nombre_comercial}
+                </Text>
+              </View>
+            </View>
 
             {/* Días seleccionados */}
-            <View style={{marginBottom: 16}}>
-              <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 8}}>
+            <View style={{ marginBottom: 16 }}>
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  marginBottom: 8,
+                }}
+              >
                 <MaterialIcons name="event" size={20} color="#7A2C34" />
-                <Text style={{marginLeft: 8, fontWeight: '600', color: '#4a5568'}}>Días seleccionados</Text>
+                <Text
+                  style={{ marginLeft: 8, fontWeight: "600", color: "#4a5568" }}
+                >
+                  Días seleccionados
+                </Text>
               </View>
-              <View style={{flexDirection: 'row', flexWrap: 'wrap', paddingLeft: 28}}>
-                {['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'].map((dia, index) => (
-                  <View 
+              <View
+                style={{
+                  flexDirection: "row",
+                  flexWrap: "wrap",
+                  paddingLeft: 28,
+                }}
+              >
+                {[
+                  "lunes",
+                  "martes",
+                  "miércoles",
+                  "jueves",
+                  "viernes",
+                  "sábado",
+                  "domingo",
+                ].map((dia, index) => (
+                  <View
                     key={index}
                     style={{
-                      backgroundColor: programacionData.dias_seleccionados?.includes(dia.toLowerCase().replace('á', 'a').replace('é', 'e')) 
-                        ? '#7A2C34' 
-                        : '#edf2f7',
+                      backgroundColor:
+                        programacionData.dias_seleccionados?.includes(
+                          dia.toLowerCase().replace("á", "a").replace("é", "e")
+                        )
+                          ? "#7A2C34"
+                          : "#edf2f7",
                       paddingHorizontal: 12,
                       paddingVertical: 6,
                       borderRadius: 20,
                       marginRight: 8,
-                      marginBottom: 8
+                      marginBottom: 8,
                     }}
                   >
-                    <Text style={{
-                      color: programacionData.dias_seleccionados?.includes(dia.toLowerCase().replace('á', 'a').replace('é', 'e')) 
-                        ? '#fff' 
-                        : '#4a5568',
-                      fontSize: 14,
-                      fontWeight: '500'
-                    }}>
+                    <Text
+                      style={{
+                        color: programacionData.dias_seleccionados?.includes(
+                          dia.toLowerCase().replace("á", "a").replace("é", "e")
+                        )
+                          ? "#fff"
+                          : "#4a5568",
+                        fontSize: 14,
+                        fontWeight: "500",
+                      }}
+                    >
                       {dia.substring(0, 3)}
                     </Text>
                   </View>
@@ -1968,17 +2293,35 @@ const Medicamentos = ({ navigation }) => {
 
             {/* Fecha de fin */}
             {programacionData.fecha_fin && (
-              <View style={{marginBottom: 16}}>
-                <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 8}}>
-                  <MaterialIcons name="event-available" size={20} color="#7A2C34" />
-                  <Text style={{marginLeft: 8, fontWeight: '600', color: '#4a5568'}}>Fecha de finalización</Text>
+              <View style={{ marginBottom: 16 }}>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    marginBottom: 8,
+                  }}
+                >
+                  <MaterialIcons
+                    name="event-available"
+                    size={20}
+                    color="#7A2C34"
+                  />
+                  <Text
+                    style={{
+                      marginLeft: 8,
+                      fontWeight: "600",
+                      color: "#4a5568",
+                    }}
+                  >
+                    Fecha de finalización
+                  </Text>
                 </View>
-                <View style={{paddingLeft: 28}}>
-                  <Text style={{color: '#4a5568'}}>
-                    {programacionData.fecha_fin.toLocaleDateString('es-ES', {
-                      day: '2-digit',
-                      month: 'long',
-                      year: 'numeric'
+                <View style={{ paddingLeft: 28 }}>
+                  <Text style={{ color: "#4a5568" }}>
+                    {programacionData.fecha_fin.toLocaleDateString("es-ES", {
+                      day: "2-digit",
+                      month: "long",
+                      year: "numeric",
                     })}
                   </Text>
                 </View>
@@ -1987,56 +2330,85 @@ const Medicamentos = ({ navigation }) => {
 
             {/* Horarios */}
             <View>
-              <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 8}}>
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  marginBottom: 8,
+                }}
+              >
                 <MaterialIcons name="access-time" size={20} color="#7A2C34" />
-                <Text style={{marginLeft: 8, fontWeight: '600', color: '#4a5568'}}>Horarios programados</Text>
+                <Text
+                  style={{ marginLeft: 8, fontWeight: "600", color: "#4a5568" }}
+                >
+                  Horarios programados
+                </Text>
               </View>
-              <View style={{paddingLeft: 28}}>
+              <View style={{ paddingLeft: 28 }}>
                 {programacionData.horarios?.length > 0 ? (
                   programacionData.horarios.map((horario, index) => (
-                    <View 
-                      key={index} 
+                    <View
+                      key={index}
                       style={{
-                        flexDirection: 'row', 
-                        alignItems: 'center', 
+                        flexDirection: "row",
+                        alignItems: "center",
                         marginBottom: 8,
-                        backgroundColor: '#f7fafc',
+                        backgroundColor: "#f7fafc",
                         padding: 12,
-                        borderRadius: 8
+                        borderRadius: 8,
                       }}
                     >
-                      <MaterialIcons name="access-time" size={18} color="#7A2C34" style={{marginRight: 8}} />
-                      <Text style={{fontSize: 16, color: '#2d3748', fontWeight: '500'}}>{horario.hora}</Text>
+                      <MaterialIcons
+                        name="access-time"
+                        size={18}
+                        color="#7A2C34"
+                        style={{ marginRight: 8 }}
+                      />
+                      <Text
+                        style={{
+                          fontSize: 16,
+                          color: "#2d3748",
+                          fontWeight: "500",
+                        }}
+                      >
+                        {horario.hora}
+                      </Text>
                     </View>
                   ))
                 ) : (
-                  <Text style={{color: '#a0aec0', fontStyle: 'italic'}}>No hay horarios configurados</Text>
+                  <Text style={{ color: "#a0aec0", fontStyle: "italic" }}>
+                    No hay horarios configurados
+                  </Text>
                 )}
               </View>
             </View>
           </View>
 
           {/* Nota Informativa - Último elemento del ScrollView */}
-          <View style={{
-            flexDirection: 'row',
-            backgroundColor: 'rgba(122, 44, 52, 0.1)',
-            borderRadius: 12,
-            padding: 12,
-            alignItems: 'flex-start',
-            marginBottom: 24, // Aumentado para dar más espacio al final
-            marginTop: 'auto' // Empuja este elemento hacia abajo
-          }}>
+          <View
+            style={{
+              flexDirection: "row",
+              backgroundColor: "rgba(122, 44, 52, 0.1)",
+              borderRadius: 12,
+              padding: 12,
+              alignItems: "flex-start",
+              marginBottom: 24, // Aumentado para dar más espacio al final
+              marginTop: "auto", // Empuja este elemento hacia abajo
+            }}
+          >
             <MaterialIcons name="info-outline" size={20} color="#7A2C34" />
-            <Text style={{
-              flex: 1,
-              marginLeft: 10,
-              color: '#4a5568',
-              fontSize: 14,
-              lineHeight: 20
-            }}>
-              {editandoProgramacion 
-                ? 'Al confirmar, se actualizará tu tratamiento con los nuevos datos.' 
-                : 'Al confirmar, se creará tu tratamiento y podrás recibir recordatorios.'}
+            <Text
+              style={{
+                flex: 1,
+                marginLeft: 10,
+                color: "#4a5568",
+                fontSize: 14,
+                lineHeight: 20,
+              }}
+            >
+              {editandoProgramacion
+                ? "Al confirmar, se actualizará tu tratamiento con los nuevos datos."
+                : "Al confirmar, se creará tu tratamiento y podrás recibir recordatorios."}
             </Text>
           </View>
         </ScrollView>
@@ -2094,8 +2466,60 @@ const Medicamentos = ({ navigation }) => {
                 {programacion.estado === "activo" ? "Activo" : "Inactivo"}
               </Text>
             </View>
+            <TouchableOpacity
+              onPress={() => setMenuVisible(programacion.programacion_id)}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              style={{ paddingLeft: 8 }}
+            >
+              <MaterialIcons name="more-vert" size={22} color="#7A2C34" />
+            </TouchableOpacity>
           </View>
         </View>
+        {menuVisible === programacion.programacion_id && (
+          <View style={styles.contextMenu}>
+            <TouchableOpacity
+              style={styles.contextMenuItem}
+              onPress={() => {
+                setMenuVisible(null);
+                editarProgramacion(programacion);
+              }}
+            >
+              <MaterialIcons name="edit" size={18} color="#7A2C34" />
+              <Text style={styles.contextMenuText}>Editar</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.contextMenuItem}
+              onPress={() => {
+                setMenuVisible(null);
+                const nuevoEstado =
+                  programacion.estado === "activo" ? "inactivo" : "activo";
+                cambiarEstadoProgramacion(
+                  programacion.programacion_id,
+                  nuevoEstado
+                );
+              }}
+            >
+              <MaterialIcons
+                name="pause-circle-outline"
+                size={18}
+                color="#7A2C34"
+              />
+              <Text style={styles.contextMenuText}>
+                {programacion.estado === "activo" ? "Desactivar" : "Activar"}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.contextMenuItem}
+              onPress={() => {
+                setMenuVisible(null);
+                confirmarEliminarProgramacion(programacion);
+              }}
+            >
+              <MaterialIcons name="delete" size={18} color="#7A2C34" />
+              <Text style={styles.contextMenuText}>Eliminar</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </TouchableOpacity>
     );
   };
@@ -2160,12 +2584,16 @@ const Medicamentos = ({ navigation }) => {
           setModalTipo(null);
         }}
       >
-        <View style={styles.modalOverlay}>
+        <View style={styles.modalOverlayCentered}>
           <View style={styles.modalDetallesContent}>
             {/* Header del modal */}
             <View style={styles.modalDetallesHeader}>
               <View style={styles.modalDetallesHeaderContent}>
-                <MaterialIcons name="event-available" size={24} color="#7A2C34" />
+                <MaterialIcons
+                  name="event-available"
+                  size={24}
+                  color="#7A2C34"
+                />
                 <Text style={styles.modalDetallesTitle}>
                   {programacionDetalles.nombre_tratamiento ||
                     programacionDetalles.nombre_comercial ||
@@ -2184,8 +2612,8 @@ const Medicamentos = ({ navigation }) => {
             </View>
 
             {/* Contenido del modal */}
-            <ScrollView 
-              style={styles.modalDetallesBody}
+            <ScrollView
+              style={[styles.modalDetallesBody, { maxHeight: "100%" }]}
               showsVerticalScrollIndicator={false}
               contentContainerStyle={styles.modalDetallesBodyContent}
             >
@@ -2196,198 +2624,111 @@ const Medicamentos = ({ navigation }) => {
                   {programacionDetalles.nombre_comercial || "No especificado"}
                 </Text>
               </View>
-              
+
               <View style={styles.detallesContainer}>
-
-              {/* Estado */}
-              <View style={styles.detalleItem}>
-                <MaterialIcons
-                  name="check-circle"
-                  size={20}
-                  color="#7A2C34"
-                />
-                <View style={styles.detalleContent}>
-                  <Text style={styles.detalleLabel}>Estado:</Text>
-                  <Text style={styles.detalleValue}>
-                    {programacionDetalles.estado === "activo"
-                      ? "Activo"
-                      : "Inactivo"}
-                  </Text>
-                </View>
-              </View>
-
-              {/* Fecha de fin */}
-              {programacionDetalles.fecha_fin && (
+                {/* Estado */}
                 <View style={styles.detalleItem}>
                   <MaterialIcons
-                    name="event-available"
+                    name="check-circle"
                     size={20}
                     color="#7A2C34"
                   />
                   <View style={styles.detalleContent}>
-                    <Text style={styles.detalleLabel}>Fecha de fin:</Text>
+                    <Text style={styles.detalleLabel}>Estado:</Text>
                     <Text style={styles.detalleValue}>
-                      {formatearFecha(programacionDetalles.fecha_fin)}
+                      {programacionDetalles.estado === "activo"
+                        ? "Activo"
+                        : "Inactivo"}
                     </Text>
                   </View>
                 </View>
-              )}
 
-              {/* Horarios */}
-              <View style={styles.horariosDetalleContainer}>
-                <View style={styles.horariosDetalleHeader}>
-                  <MaterialIcons
-                    name="access-time"
-                    size={20}
-                    color="#7A2C34"
-                  />
-                  <Text style={styles.horariosDetalleTitle}>
-                    Horarios Programados
-                  </Text>
-                </View>
-
-                {horariosReales && horariosReales.length > 0 ? (
-                  <View style={styles.tablaContainer}>
-                    {/* Encabezado de la tabla */}
-                    <View style={styles.tablaHeader}>
-                      <View style={styles.tablaHeaderCell}>
-                        <Text style={styles.tablaHeaderText}>Día</Text>
-                      </View>
-                      <View style={styles.tablaHeaderCell}>
-                        <Text style={styles.tablaHeaderText}>Hora</Text>
-                      </View>
-                    </View>
-                    
-                    {/* Filas de la tabla agrupadas por día */}
-                    {Object.entries(
-                      horariosReales.reduce((acc, horario) => {
-                        const dia = horario.dia || horario.dias || horario.dia_semana;
-                        if (!acc[dia]) {
-                          acc[dia] = [];
-                        }
-                        acc[dia].push(horario.hora);
-                        return acc;
-                      }, {})
-                    ).map(([dia, horas], index, array) => (
-                      <View 
-                        key={index} 
-                        style={[
-                          styles.tablaRow,
-                          index === 0 && styles.tablaRowFirst,
-                          index === array.length - 1 && styles.tablaRowLast
-                        ]}
-                      >
-                        <View style={[styles.tablaCell, {flex: 1, justifyContent: 'center'}]}>
-                          <Text style={[styles.tablaCellText, styles.diaText]}>
-                            {dia.charAt(0).toUpperCase() + dia.slice(1)}
-                          </Text>
-                        </View>
-                        <View style={[styles.tablaCell, {flex: 1, flexDirection: 'column', alignItems: 'center'}]}>
-                          {horas.map((hora, i) => {
-                            // Asegurarse de que la hora no tenga segundos
-                            const horaFormateada = hora.includes(':') ? hora.split(':').slice(0, 2).join(':') : hora;
-                            return (
-                              <Text 
-                                key={i} 
-                                style={[
-                                  styles.tablaCellText, 
-                                  styles.horarioText, 
-                                  {marginVertical: 2}]
-                                }
-                              >
-                                {horaFormateada}
-                              </Text>
-                            );
-                          })}
-                        </View>
-                      </View>
-                    ))}
-                  </View>
-                ) : (
-                  <View style={styles.noHorariosContainer}>
+                {/* Fecha de fin */}
+                {programacionDetalles.fecha_fin && (
+                  <View style={styles.detalleItem}>
                     <MaterialIcons
-                      name="access-time"
-                      size={24}
-                      color="#999"
+                      name="event-available"
+                      size={20}
+                      color="#7A2C34"
                     />
-                    <Text style={styles.noHorariosText}>
-                      Sin horarios configurados
-                    </Text>
+                    <View style={styles.detalleContent}>
+                      <Text style={styles.detalleLabel}>Fecha de fin:</Text>
+                      <Text style={styles.detalleValue}>
+                        {formatearFecha(programacionDetalles.fecha_fin)}
+                      </Text>
+                    </View>
                   </View>
                 )}
-              </View>
+
+                {/* Horarios */}
+                <View style={styles.horariosDetalleContainer}>
+                  <View style={styles.horariosDetalleHeader}>
+                    <MaterialIcons
+                      name="access-time"
+                      size={20}
+                      color="#7A2C34"
+                    />
+                    <Text style={styles.horariosDetalleTitle}>
+                      Horarios Programados
+                    </Text>
+                  </View>
+
+                  {horariosReales && horariosReales.length > 0 ? (
+                    <View style={styles.tablaHorizontalContainer}>
+                      {/* Agrupar horarios por día */}
+                      {(() => {
+                        const horariosPorDia = horariosReales.reduce((acc, horario) => {
+                          const dia = horario.dia || horario.dias || horario.dia_semana;
+                          if (!acc[dia]) {
+                            acc[dia] = [];
+                          }
+                          acc[dia].push(horario.hora);
+                          return acc;
+                        }, {});
+
+                        return Object.entries(horariosPorDia).map(([dia, horas], index) => (
+                          <View key={index} style={styles.diaHorarioCard}>
+                            <View style={styles.diaHeaderHorizontal}>
+                              <Text style={styles.diaTextHorizontal}>
+                                {dia.charAt(0).toUpperCase() + dia.slice(1)}
+                              </Text>
+                            </View>
+                            <View style={styles.horariosListHorizontal}>
+                              {horas.map((hora, i) => {
+                                const horaFormateada = hora.includes(":")
+                                  ? hora.split(":").slice(0, 2).join(":")
+                                  : hora;
+                                return (
+                                  <Text
+                                    key={i}
+                                    style={styles.horarioTextHorizontal}
+                                  >
+                                    {horaFormateada}
+                                  </Text>
+                                );
+                              })}
+                            </View>
+                          </View>
+                        ));
+                      })()}
+                    </View>
+                  ) : (
+                    <View style={styles.noHorariosContainer}>
+                      <MaterialIcons
+                        name="access-time"
+                        size={24}
+                        color="#999"
+                      />
+                      <Text style={styles.noHorariosText}>
+                        Sin horarios configurados
+                      </Text>
+                    </View>
+                  )}
+                </View>
               </View>
             </ScrollView>
 
-            {/* Footer con botones de acción */}
-            <View style={styles.modalDetallesFooter}>
-              <TouchableOpacity
-                style={[styles.seleccionarButton, {marginTop: 10}]}
-                onPress={() => {
-                  setModalDetallesVisible(false);
-                  setModalTipo(null);
-                  // Navegar a editar programación
-                  const programacion = programaciones.find(
-                    (p) => p.id_programacion === programacionDetalles.id_programacion
-                  );
-                  if (programacion) {
-                    editarProgramacion(programacion);
-                  }
-                }}
-              >
-                <MaterialIcons name="edit" size={20} color="#fff" />
-                <Text style={styles.seleccionarButtonText}>
-                  Editar Programación
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.seleccionarButton,
-                  programacionDetalles.estado === "activo" 
-                    ? { backgroundColor: '#dc3545' } 
-                    : { backgroundColor: '#28a745' },
-                  { marginTop: 10 }
-                ]}
-                onPress={() => {
-                  const nuevoEstado =
-                    programacionDetalles.estado === "activo"
-                      ? "inactivo"
-                      : "activo";
-                  cambiarEstadoProgramacion(
-                    programacionDetalles.programacion_id,
-                    nuevoEstado
-                  );
-                }}
-              >
-                <MaterialIcons
-                  name={
-                    programacionDetalles.estado === "activo"
-                      ? "pause-circle-outline"
-                      : "play-circle-outline"
-                  }
-                  size={20}
-                  color="#fff"
-                />
-                <Text style={styles.seleccionarButtonText}>
-                  {programacionDetalles.estado === "activo"
-                    ? "Desactivar"
-                    : "Activar"}
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.seleccionarButton, { backgroundColor: '#dc3545', marginTop: 10 }]}
-                onPress={() => {
-                  setModalDetallesVisible(false);
-                  setModalTipo(null);
-                  confirmarEliminarProgramacion(programacionDetalles);
-                }}
-              >
-                <MaterialIcons name="delete" size={20} color="#fff" />
-                <Text style={styles.seleccionarButtonText}>Eliminar</Text>
-              </TouchableOpacity>
-            </View>
+            {/* Footer removido a pedido: sin acciones (editar/desactivar/eliminar) */}
           </View>
         </View>
       </Modal>
@@ -2408,7 +2749,7 @@ const Medicamentos = ({ navigation }) => {
           setModalTipo(null);
         }}
       >
-        <View style={styles.modalOverlay}>
+        <View style={styles.modalOverlayCentered}>
           <View style={styles.modalDetallesContent}>
             {/* Header */}
             <View style={styles.modalDetallesHeader}>
@@ -2446,10 +2787,7 @@ const Medicamentos = ({ navigation }) => {
               {/* Información detallada */}
               <View style={styles.detallesContainer}>
                 <View style={styles.detalleItem}>
-                  <MaterialIcons name="info"
-                    size={20}
-                    color="#7A2C34"
-                  />
+                  <MaterialIcons name="info" size={20} color="#7A2C34" />
                   <View style={styles.detalleContent}>
                     <Text style={styles.detalleLabel}>Descripción:</Text>
                     <Text style={styles.detalleValue}>
@@ -2460,11 +2798,7 @@ const Medicamentos = ({ navigation }) => {
 
                 {pastillaDetalles.presentacion && (
                   <View style={styles.detalleItem}>
-                    <MaterialIcons
-                      name="inventory"
-                      size={20}
-                      color="#7A2C34"
-                    />
+                    <MaterialIcons name="inventory" size={20} color="#7A2C34" />
                     <View style={styles.detalleContent}>
                       <Text style={styles.detalleLabel}>Presentación:</Text>
                       <Text style={styles.detalleValue}>
@@ -2476,11 +2810,7 @@ const Medicamentos = ({ navigation }) => {
 
                 {pastillaDetalles.peso_unidad && (
                   <View style={styles.detalleItem}>
-                    <MaterialIcons
-                      name="scale"
-                      size={20}
-                      color="#7A2C34"
-                    />
+                    <MaterialIcons name="scale" size={20} color="#7A2C34" />
                     <View style={styles.detalleContent}>
                       <Text style={styles.detalleLabel}>Peso por Unidad:</Text>
                       <Text style={styles.detalleValue}>
@@ -2492,11 +2822,7 @@ const Medicamentos = ({ navigation }) => {
 
                 {pastillaDetalles.efectos_secundarios && (
                   <View style={styles.detalleItem}>
-                    <MaterialIcons
-                      name="warning"
-                      size={20}
-                      color="#ff6b6b"
-                    />
+                    <MaterialIcons name="warning" size={20} color="#ff6b6b" />
                     <View style={styles.detalleContent}>
                       <Text style={styles.detalleLabel}>
                         Efectos Secundarios:
@@ -2551,16 +2877,25 @@ const Medicamentos = ({ navigation }) => {
   // Estado para el selector de sonido mejorado
   const [soundModalVisible, setSoundModalVisible] = useState(false);
   const [editingSoundIndex, setEditingSoundIndex] = useState(null);
-  const [selectedSound, setSelectedSound] = useState('default');
+  const [selectedSound, setSelectedSound] = useState("default");
   const [isPlaying, setIsPlaying] = useState(false);
   const [soundPreviewTimeout, setSoundPreviewTimeout] = useState(null);
+
+  // Estado para el modal de configuración de notificaciones
+  const [notificationConfigModalVisible, setNotificationConfigModalVisible] =
+    useState(false);
 
   // Mostrar el modal de selector de sonido
   const showSoundPicker = async (index) => {
     try {
-      const currentSound = alarms[index]?.sound || 'default';
-      console.log('Mostrando selector de sonido para alarma', index, 'sonido actual:', currentSound);
-      
+      const currentSound = alarms[index]?.sound || "default";
+      console.log(
+        "Mostrando selector de sonido para alarma",
+        index,
+        "sonido actual:",
+        currentSound
+      );
+
       // Configurar el modo de audio antes de mostrar el modal
       const audioConfig = {
         allowsRecordingIOS: false,
@@ -2568,92 +2903,67 @@ const Medicamentos = ({ navigation }) => {
         staysActiveInBackground: true,
         playThroughEarpieceAndroid: false,
         shouldDuckAndroid: true,
-        // Usar valores numéricos directamente que son compatibles con todas las versiones
-        // 1 = INTERRUPTION_MODE_IOS_MIX_WITH_OTHERS
-        // 2 = INTERRUPTION_MODE_ANDROID_DO_NOT_MIX
-        interruptionModeIOS: 1,
-        interruptionModeAndroid: 2
+        // Usar strings que son compatibles con expo-audio
+        interruptionModeIOS: 'mixWithOthers',
+        interruptionModeAndroid: 'doNotMix',
       };
 
-      console.log('🔊 Configurando audio en showSoundPicker con:', audioConfig);
-      await Audio.setAudioModeAsync(audioConfig);
-      
+      console.log("🔊 Configurando audio en showSoundPicker con:", audioConfig);
+      await setAudioModeAsync(audioConfig);
+
       setSelectedSound(currentSound);
       setEditingSoundIndex(index);
       setSoundModalVisible(true);
-      
+
       // Reproducir una vista previa del sonido actual
       setTimeout(() => {
-        handleSoundPreview(currentSound).catch(e => 
-          console.error('Error al reproducir vista previa:', e)
+        handleSoundPreview(currentSound).catch((e) =>
+          console.error("Error al reproducir vista previa:", e)
         );
       }, 300);
     } catch (error) {
-      console.error('Error al mostrar el selector de sonido:', error);
-      Alert.alert('Error', 'No se pudo abrir el selector de sonido');
+      console.error("Error al mostrar el selector de sonido:", error);
+      Alert.alert("Error", "No se pudo abrir el selector de sonido");
     }
   };
 
-  // Manejar la vista previa del sonido
+  // Manejar la vista previa del sonido (optimizado para reproducción inmediata)
   const handleSoundPreview = async (sound) => {
-    console.log('Iniciando handleSoundPreview con sonido:', sound);
-    
+    console.log("Reproduciendo sonido:", sound);
+
     // Limpiar cualquier timeout existente
     if (soundPreviewTimeout) {
-      console.log('Limpiando timeout previo');
       clearTimeout(soundPreviewTimeout);
       setSoundPreviewTimeout(null);
     }
-    
+
     try {
-      // Actualizar el estado de reproducción
+      // Actualizar el estado de reproducción inmediatamente
       setIsPlaying(true);
       
-      console.log('Configurando modo de audio...');
-      // Configurar el modo de audio antes de reproducir
-      const audioConfig = {
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: true,
-        playThroughEarpieceAndroid: false,
-        shouldDuckAndroid: true,
-        // Usar valores numéricos directamente que son compatibles con todas las versiones
-        // 1 = INTERRUPTION_MODE_IOS_MIX_WITH_OTHERS
-        // 2 = INTERRUPTION_MODE_ANDROID_DO_NOT_MIX
-        interruptionModeIOS: 1,
-        interruptionModeAndroid: 2
-      };
-
-      console.log('🔊 Configurando audio en handleSoundPreview con:', audioConfig);
-      await Audio.setAudioModeAsync(audioConfig);
-      
-      console.log('Reproduciendo sonido...');
-      // Reproducir el nuevo sonido
+      // Reproducir el sonido directamente (ahora es inmediato gracias a la precarga)
       await playSoundPreview(sound);
-      console.log(' Sonido reproducido con éxito');
       
       // Configurar timeout para limpiar el estado de reproducción
       const timeout = setTimeout(() => {
-        console.log(' Restableciendo estado de reproducción');
         setIsPlaying(false);
         setSoundPreviewTimeout(null);
       }, 3000);
-      
+
       setSoundPreviewTimeout(timeout);
-      
     } catch (error) {
-      console.error(' Error al reproducir el sonido:', error);
-      
+      console.error(" Error al reproducir el sonido:", error);
+
       // Restablecer el estado en caso de error
       setIsPlaying(false);
       setSoundPreviewTimeout(null);
-      
+
       // Mostrar mensaje de error al usuario
       Alert.alert(
-        'Error de reproducción', 
-        'No se pudo reproducir el sonido. Asegúrate de que el volumen esté encendido y que la aplicación tenga los permisos necesarios.'
+        "Error de reproducción",
+        "No se pudo reproducir el sonido. Asegúrate de que el volumen esté encendido y que la aplicación tenga los permisos necesarios."
       );
-      
+
       // Intentar limpiar en caso de error
       try {
         const audioConfig = {
@@ -2662,17 +2972,18 @@ const Medicamentos = ({ navigation }) => {
           staysActiveInBackground: false,
           playThroughEarpieceAndroid: false,
           shouldDuckAndroid: false,
-          // Usar valores numéricos directamente que son compatibles con todas las versiones
-          // 1 = INTERRUPTION_MODE_IOS_MIX_WITH_OTHERS
-          // 2 = INTERRUPTION_MODE_ANDROID_DO_NOT_MIX
-          interruptionModeIOS: 1,
-          interruptionModeAndroid: 2
+          // Usar strings que son compatibles con expo-audio
+          interruptionModeIOS: 'mixWithOthers',
+          interruptionModeAndroid: 'doNotMix',
         };
 
-        console.log('🔊 Configurando audio en manejo de error con:', audioConfig);
-        await Audio.setAudioModeAsync(audioConfig);
+        console.log(
+          "🔊 Configurando audio en manejo de error con:",
+          audioConfig
+        );
+        await setAudioModeAsync(audioConfig);
       } catch (e) {
-        console.error('Error al configurar el modo de audio:', e);
+        console.error("Error al configurar el modo de audio:", e);
       }
     }
   };
@@ -2687,93 +2998,99 @@ const Medicamentos = ({ navigation }) => {
   const handleSoundConfirm = async () => {
     try {
       if (editingSoundIndex === null || !selectedSound) {
-        console.warn('No hay un sonido seleccionado o índice de alarma inválido');
+        console.warn(
+          "No hay un sonido seleccionado o índice de alarma inválido"
+        );
         return;
       }
-      
-      console.log(`Confirmando selección de sonido: ${selectedSound} para alarma ${editingSoundIndex}`);
-      
+
+      console.log(
+        `Confirmando selección de sonido: ${selectedSound} para alarma ${editingSoundIndex}`
+      );
+
       // Detener cualquier reproducción en curso
       if (isPlaying) {
         setIsPlaying(false);
+        
+        // Detener cualquier sonido que se esté reproduciendo usando la función optimizada
+        try {
+          await stopCurrentSound();
+        } catch (audioError) {
+          console.warn(
+            "No se pudo detener la reproducción de audio:",
+            audioError
+          );
+        }
+        
         if (soundPreviewTimeout) {
           clearTimeout(soundPreviewTimeout);
           setSoundPreviewTimeout(null);
         }
       }
-      
+
       // Actualizar el sonido de la alarma
       updateAlarmSound(editingSoundIndex, selectedSound);
-      
+
       // Cerrar el modal después de un breve retraso para una mejor experiencia de usuario
       setTimeout(() => {
         setSoundModalVisible(false);
         // Limpiar el estado después de cerrar el modal
         setTimeout(() => {
           setEditingSoundIndex(null);
-          setSelectedSound('default');
+          setSelectedSound("default");
         }, 300);
       }, 100);
-      
     } catch (error) {
-      console.error('Error al confirmar la selección de sonido:', error);
-      Alert.alert('Error', 'No se pudo guardar la selección de sonido');
+      console.error("Error al confirmar la selección de sonido:", error);
+      Alert.alert("Error", "No se pudo guardar la selección de sonido");
     }
   };
 
   // Cancelar la selección
   const handleSoundCancel = async () => {
     try {
-      console.log('Cancelando selección de sonido');
-      
+      console.log("Cancelando selección de sonido");
+
       // Detener cualquier reproducción en curso
       if (isPlaying) {
-        console.log('Deteniendo reproducción en curso...');
+        console.log("Deteniendo reproducción en curso...");
         setIsPlaying(false);
-        
-        // Detener cualquier sonido que se esté reproduciendo
-        try {
-          const audioConfig = {
-            allowsRecordingIOS: false,
-            playsInSilentModeIOS: true,
-            staysActiveInBackground: false,
-            playThroughEarpieceAndroid: false,
-            shouldDuckAndroid: false,
-            // Usar valores numéricos directamente que son compatibles con todas las versiones
-            // 1 = INTERRUPTION_MODE_IOS_MIX_WITH_OTHERS
-            // 2 = INTERRUPTION_MODE_ANDROID_DO_NOT_MIX
-            interruptionModeIOS: 1,
-            interruptionModeAndroid: 2
-          };
 
-          console.log('🔊 Configurando audio en handleSoundCancel con:', audioConfig);
-          await Audio.setAudioModeAsync(audioConfig);
-          // Intentar detener cualquier sonido que esté reproduciéndose a través de expo-av
-          await Audio.Sound.stopAsync();
+        // Detener cualquier sonido que se esté reproduciendo usando la función optimizada
+        try {
+          await stopCurrentSound();
+          
+          // Limpiar cualquier timeout pendiente
+          if (soundPreviewTimeout) {
+            clearTimeout(soundPreviewTimeout);
+            setSoundPreviewTimeout(null);
+          }
         } catch (audioError) {
-          console.warn('No se pudo detener la reproducción de audio:', audioError);
+          console.warn(
+            "No se pudo detener la reproducción de audio:",
+            audioError
+          );
         }
       }
-      
+
       // Limpiar timeouts
       if (soundPreviewTimeout) {
-        console.log('Limpiando timeout de vista previa');
+        console.log("Limpiando timeout de vista previa");
         clearTimeout(soundPreviewTimeout);
         setSoundPreviewTimeout(null);
       }
-      
+
       // Cerrar el modal
       setSoundModalVisible(false);
-      
+
       // Limpiar estados después de la animación
       setTimeout(() => {
         setEditingSoundIndex(null);
-        setSelectedSound('default');
-        console.log('Selección de sonido cancelada');
+        setSelectedSound("default");
+        console.log("Selección de sonido cancelada");
       }, 300);
-      
     } catch (error) {
-      console.error('Error al cancelar la selección de sonido:', error);
+      console.error("Error al cancelar la selección de sonido:", error);
       // Asegurarse de que el modal se cierre incluso si hay un error
       setSoundModalVisible(false);
     }
@@ -2781,10 +3098,176 @@ const Medicamentos = ({ navigation }) => {
 
   // Opciones de sonido disponibles
   const soundOptions = [
-    { id: 'default', label: 'Predeterminado', icon: 'notifications' },
-    { id: 'alarm', label: 'Alarma', icon: 'alarm' },
-    { id: 'tone', label: 'Tono', icon: 'music-note' },
+    { id: "default", label: "Predeterminado", icon: "notifications" },
+    { id: "alarm", label: "Alarma", icon: "alarm" },
+    { id: "tone", label: "Tono", icon: "music-note" },
   ];
+
+  // Renderizar el modal de configuración de notificaciones
+  const renderNotificationConfigModal = () => {
+    if (!notificationConfigModalVisible) return null;
+
+    return (
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={notificationConfigModalVisible}
+        onRequestClose={() => setNotificationConfigModalVisible(false)}
+        statusBarTranslucent={true}
+      >
+        <View style={styles.notificationModalOverlay}>
+          <View style={styles.notificationModalCard}>
+            <View style={styles.notificationModalHeader}>
+              <View style={styles.notificationModalHeaderContent}>
+                <MaterialIcons name="notifications" size={24} color="#7A2C34" />
+                <Text style={styles.notificationModalTitle}>
+                  Configuración de notificaciones
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setNotificationConfigModalVisible(false)}
+                style={styles.notificationCloseButton}
+                accessibilityLabel="Cerrar"
+              >
+                <MaterialIcons name="close" size={20} color="#7A2C34" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.notificationModalSubtitle}>
+              Activa o desactiva las notificaciones para cada horario
+            </Text>
+
+            <ScrollView
+              style={styles.notificationModalContent}
+              showsVerticalScrollIndicator={false}
+            >
+              {programacionData.horarios &&
+              programacionData.horarios.length > 0 ? (
+                programacionData.horarios.map((horario, index) => {
+                  const alarm = alarms[index] || {
+                    id: null,
+                    time: new Date(`2000-01-01T${horario.hora}`),
+                    enabled: true,
+                    sound: "default",
+                    vibrate: true,
+                    volume: 100, // Aumentado para mayor volumen
+                    name: `Alarma ${index + 1}`,
+                  };
+
+                  return (
+                    <View
+                      key={index}
+                      style={[
+                        styles.notificationAlarmItem,
+                        !alarm.enabled && styles.notificationAlarmItemDisabled,
+                      ]}
+                    >
+                      <TouchableOpacity
+                        style={styles.notificationAlarmContent}
+                        onPress={() => showSoundPicker(index)}
+                        activeOpacity={0.7}
+                      >
+                        <View style={styles.notificationAlarmTimeContainer}>
+                          <View style={styles.notificationAlarmTimeRow}>
+                            <Text style={styles.notificationAlarmTime}>
+                              {new Date(
+                                `2000-01-01T${horario.hora}`
+                              ).toLocaleTimeString([], {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </Text>
+                            <View style={styles.notificationSoundIndicator}>
+                              <MaterialIcons
+                                name={
+                                  alarm.sound === "alarm"
+                                    ? "alarm"
+                                    : alarm.sound === "tone"
+                                    ? "music-note"
+                                    : "notifications-none"
+                                }
+                                size={16}
+                                color={alarm.enabled ? "#7A2C34" : "#999"}
+                              />
+                            </View>
+                          </View>
+                          <Text style={styles.notificationAlarmDias}>
+                            {programacionData.dias_seleccionados
+                              ? programacionData.dias_seleccionados
+                                  .map(
+                                    (dia) =>
+                                      [
+                                        "Dom",
+                                        "Lun",
+                                        "Mar",
+                                        "Mié",
+                                        "Jue",
+                                        "Vie",
+                                        "Sáb",
+                                      ][dia]
+                                  )
+                                  .join(", ")
+                              : ""}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+
+                      <Switch
+                        value={alarm.enabled}
+                        onValueChange={(value) => {
+                          const newAlarms = [...alarms];
+                          if (!newAlarms[index]) {
+                            newAlarms[index] = {
+                              ...alarm,
+                              enabled: value,
+                              time: new Date(`2000-01-01T${horario.hora}`),
+                              days: programacionData.dias_seleccionados || [],
+                            };
+                          } else {
+                            newAlarms[index].enabled = value;
+                          }
+                          setAlarms(newAlarms);
+                          handleAlarmsChange(newAlarms);
+                        }}
+                        trackColor={{ false: "#E0E0E0", true: "#7A2C34" }}
+                        thumbColor={alarm.enabled ? "#fff" : "#f4f3f4"}
+                        ios_backgroundColor="#E0E0E0"
+                      />
+                    </View>
+                  );
+                })
+              ) : (
+                <View style={styles.notificationNoAlarmsContainer}>
+                  <MaterialIcons
+                    name="notifications-off"
+                    size={48}
+                    color="#999"
+                  />
+                  <Text style={styles.notificationNoAlarmsText}>
+                    No hay horarios configurados
+                  </Text>
+                  <Text style={styles.notificationNoAlarmsSubtext}>
+                    Configura horarios en el paso anterior para activar las
+                    notificaciones
+                  </Text>
+                </View>
+              )}
+            </ScrollView>
+
+            <View style={styles.notificationModalFooter}>
+              <TouchableOpacity
+                style={styles.notificationModalButton}
+                onPress={() => setNotificationConfigModalVisible(false)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.notificationModalButtonText}>Aceptar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
 
   // Renderizar el modal de selección de sonido
   const renderSoundPickerModal = () => {
@@ -2799,60 +3282,80 @@ const Medicamentos = ({ navigation }) => {
         statusBarTranslucent={true}
       >
         <View style={styles.soundModalOverlay}>
-          <View style={styles.soundModalContent}>
-            <View style={styles.soundModalHeader}>
-              <Text style={styles.soundModalTitle}>Seleccionar sonido</Text>
-              <Text style={styles.soundModalSubtitle}>
-                {isPlaying ? 'Reproduciendo...' : 'Toca para escuchar una vista previa'}
-              </Text>
-            </View>
-            
+           <View style={styles.soundModalCard}>
+             <View style={styles.soundModalHeader}>
+               <View style={styles.soundModalHeaderContent}>
+                 <MaterialIcons name="music-note" size={24} color="#7A2C34" />
+                 <Text style={styles.soundModalTitle}>Seleccionar sonido</Text>
+               </View>
+               <TouchableOpacity
+                 onPress={handleSoundCancel}
+                 style={styles.soundCloseButton}
+                 accessibilityLabel="Cerrar"
+               >
+                 <MaterialIcons name="close" size={20} color="#7A2C34" />
+               </TouchableOpacity>
+             </View>
+             <Text style={styles.soundModalSubtitle}>
+               {isPlaying
+                 ? "Reproduciendo..."
+                 : "Toca para escuchar una vista previa"}
+             </Text>
+
             <View style={styles.soundOptionsContainer}>
               {soundOptions.map((option) => {
                 const isSelected = selectedSound === option.id;
                 const isCurrentlyPlaying = isPlaying && isSelected;
-                
+
                 return (
                   <TouchableOpacity
                     key={option.id}
                     style={[
                       styles.soundOptionButton,
                       isSelected && styles.soundOptionSelected,
-                      isPlaying && !isSelected && styles.soundOptionDisabled
+                      isPlaying && !isSelected && styles.soundOptionDisabled,
                     ]}
                     onPress={() => handleSoundSelect(option.id)}
                     disabled={isPlaying && !isSelected}
                     activeOpacity={0.7}
                   >
                     <View style={styles.soundOptionContent}>
-                      <View style={[
-                        styles.soundIconContainer,
-                        isSelected && styles.soundIconContainerSelected
-                      ]}>
-                        <MaterialIcons 
-                          name={isCurrentlyPlaying ? 'volume-up' : option.icon} 
-                          size={24} 
-                          color={isSelected ? '#fff' : '#7A2C34'} 
+                      <View
+                        style={[
+                          styles.soundIconContainer,
+                          isSelected && styles.soundIconContainerSelected,
+                        ]}
+                      >
+                        <MaterialIcons
+                          name={isCurrentlyPlaying ? "volume-up" : option.icon}
+                          size={24}
+                          color={isSelected ? "#fff" : "#7A2C34"}
                         />
                       </View>
-                      
-                      <Text style={[
-                        styles.soundOptionText,
-                        isSelected && styles.soundOptionTextSelected
-                      ]}>
+
+                      <Text
+                        style={[
+                          styles.soundOptionText,
+                          isSelected && styles.soundOptionTextSelected,
+                        ]}
+                      >
                         {option.label}
                       </Text>
-                      
+
                       {isSelected && (
                         <View style={styles.checkmarkContainer}>
-                          <MaterialIcons name="check" size={20} color="#7A2C34" />
+                          <MaterialIcons
+                            name="check-circle"
+                            size={20}
+                            color="#7A2C34"
+                          />
                         </View>
                       )}
-                      
+
                       {isCurrentlyPlaying && (
-                        <ActivityIndicator 
-                          size="small" 
-                          color="#7A2C34" 
+                        <ActivityIndicator
+                          size="small"
+                          color="#7A2C34"
                           style={styles.playingIndicator}
                         />
                       )}
@@ -2861,13 +3364,13 @@ const Medicamentos = ({ navigation }) => {
                 );
               })}
             </View>
-            
+
             <View style={styles.soundModalFooter}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[
-                  styles.modalButton, 
+                  styles.modalButton,
                   styles.cancelButton,
-                  isPlaying && styles.disabledButton
+                  isPlaying && styles.disabledButton,
                 ]}
                 onPress={handleSoundCancel}
                 disabled={isPlaying}
@@ -2875,12 +3378,12 @@ const Medicamentos = ({ navigation }) => {
               >
                 <Text style={styles.cancelButtonText}>Cancelar</Text>
               </TouchableOpacity>
-              
-              <TouchableOpacity 
+
+              <TouchableOpacity
                 style={[
-                  styles.modalButton, 
+                  styles.modalButton,
                   styles.confirmButton,
-                  isPlaying && styles.disabledButton
+                  isPlaying && styles.disabledButton,
                 ]}
                 onPress={handleSoundConfirm}
                 disabled={isPlaying}
@@ -2903,13 +3406,13 @@ const Medicamentos = ({ navigation }) => {
         <View style={styles.navigationButtonsContainer}>
           <View style={styles.navButtonsRow}>
             <TouchableOpacity
-              style={[styles.navButton, {flex: 1, marginRight: 8}]}
+              style={[styles.navButton, { flex: 1, marginRight: 8 }]}
               onPress={volverAPasoAnterior}
             >
               <Text style={styles.navButtonText}>Atrás</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.navButton, styles.navButtonPrimary, {flex: 1}]}
+              style={[styles.navButton, styles.navButtonPrimary, { flex: 1 }]}
               onPress={avanzarAConfirmacionFinal}
             >
               <Text style={[styles.navButtonText, styles.navButtonTextPrimary]}>
@@ -2927,7 +3430,7 @@ const Medicamentos = ({ navigation }) => {
         <View style={styles.navButtonsRow}>
           {currentStep > 1 && (
             <TouchableOpacity
-              style={[styles.navButton, {flex: 1, marginRight: 8}]}
+              style={[styles.navButton, { flex: 1, marginRight: 8 }]}
               onPress={() => setCurrentStep(currentStep - 1)}
             >
               <Text style={styles.navButtonText}>Atrás</Text>
@@ -2936,7 +3439,7 @@ const Medicamentos = ({ navigation }) => {
 
           {currentStep === 1 && editandoProgramacion && (
             <TouchableOpacity
-              style={[styles.navButton, styles.navButtonPrimary, {flex: 1}]}
+              style={[styles.navButton, styles.navButtonPrimary, { flex: 1 }]}
               onPress={() => setCurrentStep(2)}
             >
               <Text style={[styles.navButtonText, styles.navButtonTextPrimary]}>
@@ -2945,9 +3448,9 @@ const Medicamentos = ({ navigation }) => {
             </TouchableOpacity>
           )}
 
-{currentStep === 2 && (
+          {currentStep === 2 && (
             <TouchableOpacity
-              style={[styles.navButton, styles.navButtonPrimary, {flex: 1}]}
+              style={[styles.navButton, styles.navButtonPrimary, { flex: 1 }]}
               onPress={avanzarADias}
             >
               <Text style={[styles.navButtonText, styles.navButtonTextPrimary]}>
@@ -2958,7 +3461,7 @@ const Medicamentos = ({ navigation }) => {
 
           {currentStep === 3 && (
             <TouchableOpacity
-              style={[styles.navButton, styles.navButtonPrimary, {flex: 1}]}
+              style={[styles.navButton, styles.navButtonPrimary, { flex: 1 }]}
               onPress={avanzarAConfirmacion}
             >
               <Text style={[styles.navButtonText, styles.navButtonTextPrimary]}>
@@ -2969,7 +3472,7 @@ const Medicamentos = ({ navigation }) => {
 
           {currentStep === 4 && (
             <TouchableOpacity
-              style={[styles.navButton, styles.navButtonPrimary, {flex: 1}]}
+              style={[styles.navButton, styles.navButtonPrimary, { flex: 1 }]}
               onPress={avanzarAConfiguracionAlarmas}
             >
               <Text style={[styles.navButtonText, styles.navButtonTextPrimary]}>
@@ -2980,14 +3483,16 @@ const Medicamentos = ({ navigation }) => {
 
           {currentStep === 6 && (
             <TouchableOpacity
-              style={[styles.navButton, styles.navButtonPrimary, {flex: 1}]}
+              style={[styles.navButton, styles.navButtonPrimary, { flex: 1 }]}
               onPress={crearProgramacion}
               disabled={!!loading}
             >
               {loading ? (
                 <ActivityIndicator size="small" color="#ffffff" />
               ) : (
-                <Text style={[styles.navButtonText, styles.navButtonTextPrimary]}>
+                <Text
+                  style={[styles.navButtonText, styles.navButtonTextPrimary]}
+                >
                   {editandoProgramacion
                     ? "Actualizar tratamiento"
                     : "Guardar tratamiento"}
@@ -3002,12 +3507,12 @@ const Medicamentos = ({ navigation }) => {
 
   // Función para formatear la hora
   const formatearHora = (fecha) => {
-    if (!fecha) return '';
+    if (!fecha) return "";
     const date = new Date(fecha);
-    return date.toLocaleTimeString('es-AR', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false
+    return date.toLocaleTimeString("es-AR", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
     });
   };
 
@@ -3052,11 +3557,7 @@ const Medicamentos = ({ navigation }) => {
         {/* Lista de Programaciones */}
         <View style={styles.programacionesContainer}>
           <View style={styles.programacionesHeader}>
-            <MaterialIcons
-              name="calendar-today"
-              size={24}
-              color="#7A2C34"
-            />
+            <MaterialIcons name="calendar-today" size={24} color="#7A2C34" />
             <Text style={styles.programacionesTitle}>Tratamientos Activos</Text>
           </View>
 
@@ -3114,79 +3615,112 @@ const Medicamentos = ({ navigation }) => {
 
             {/* Contenido del modal */}
             {currentStep === 1 ? (
-              <View style={styles.stepContainer}>
-                {/* Barra de búsqueda fija en la parte superior */}
-                <View style={styles.searchContainer}>
-                  <View style={styles.searchInputContainer}>
-                    <MaterialIcons name="search" size={20} color="#7A2C34" />
-                    <TextInput
-                      style={styles.searchInput}
-                      placeholder="Buscar medicamento..."
-                      placeholderTextColor="#999"
-                      value={searchText}
-                      onChangeText={filtrarPastillas}
-                    />
-                    {searchText.length > 0 && (
-                      <TouchableOpacity 
-                        onPress={() => filtrarPastillas('')}
-                        style={styles.clearButton}
-                      >
-                        <MaterialIcons name="close" size={20} color="#7A2C34" />
-                      </TouchableOpacity>
-                    )}
-                  </View>
+              <View style={{ flex: 1 }}>
+                <View style={{ padding: 12 }}>
+                  <TextInput
+                    placeholder="Buscar pastilla..."
+                    placeholderTextColor="#999"
+                    value={searchText}
+                    onChangeText={filtrarPastillas}
+                    style={{
+                      height: 44,
+                      borderWidth: 1,
+                      borderColor: "#e2e8f0",
+                      borderRadius: 8,
+                      paddingHorizontal: 12,
+                      backgroundColor: "#fff",
+                    }}
+                  />
                 </View>
-                
-                {/* Contenedor de la lista */}
-                <View style={styles.medicamentosListContainer}>
-                  {loading ? (
-                    <View style={styles.loadingContainer}>
-                      <ActivityIndicator size="large" color="#7A2C34" />
-                      <Text style={styles.loadingText}>
-                        Cargando medicamentos...
+                {editandoProgramacion ? (
+                  <View style={{ padding: 12 }}>
+                    <View style={styles.infoCard}>
+                      <View style={styles.infoCardRow}>
+                        <MaterialIcons
+                          name="medication"
+                          size={20}
+                          color="#7A2C34"
+                        />
+                        <Text style={styles.infoCardLabel}>
+                          Medicamento seleccionado
+                        </Text>
+                      </View>
+                      <Text style={styles.medicamentoNombre}>
+                        {selectedPastilla?.nombre_comercial ||
+                          selectedPastilla?.nombre ||
+                          "Medicamento"}
+                      </Text>
+                      {selectedPastilla?.descripcion ? (
+                        <Text
+                          style={styles.pastillaCardDescripcion}
+                          numberOfLines={2}
+                        >
+                          {selectedPastilla.descripcion}
+                        </Text>
+                      ) : null}
+                      <Text style={{ color: "#718096", marginTop: 8 }}>
+                        No puedes cambiar el medicamento al editar el
+                        tratamiento.
                       </Text>
                     </View>
-                  ) : error ? (
-                    <View style={styles.errorContainer}>
-                      <MaterialIcons
-                        name="warning"
-                        size={48}
-                        color="#ff6b6b"
-                      />
-                      <Text style={styles.errorText}>{error}</Text>
-                      <TouchableOpacity
-                        style={styles.retryButton}
-                        onPress={() => {
-                          console.log("🔄 Reintentando carga de medicamentos...");
-                          cargarPastillas();
-                        }}
-                      >
-                        <MaterialIcons
-                          name="refresh"
-                          size={20}
-                          color="#fff"
-                        />
-                        <Text style={styles.retryButtonText}>Reintentar</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : (
-                    <FlatList
-                      style={{ flex: 1 }}
-                      contentContainerStyle={styles.listContainer}
-                      data={filteredPastillas}
-                      keyExtractor={(item) => item.remedio_global_id?.toString() || Math.random().toString()}
-                      renderItem={renderPastillaItem}
-                      ListEmptyComponent={renderEmptyComponent}
-                      keyboardShouldPersistTaps="handled"
-                      removeClippedSubviews={false}
-                      showsVerticalScrollIndicator={true}
-                      ListFooterComponent={<View style={{ height: 20 }} />}
-                      contentInset={{ bottom: 20 }}
-                      contentInsetAdjustmentBehavior="automatic"
-                      keyboardDismissMode="on-drag"
-                    />
-                  )}
-                </View>
+                  </View>
+                ) : loading ? (
+                  <View
+                    style={{
+                      flex: 1,
+                      justifyContent: "center",
+                      alignItems: "center",
+                    }}
+                  >
+                    <ActivityIndicator size="large" color="#7A2C34" />
+                    <Text style={{ marginTop: 10, color: "#666" }}>
+                      Cargando medicamentos...
+                    </Text>
+                  </View>
+                ) : error ? (
+                  <View
+                    style={{
+                      flex: 1,
+                      justifyContent: "center",
+                      alignItems: "center",
+                      padding: 20,
+                    }}
+                  >
+                    <Text style={{ color: "#ff6b6b", marginBottom: 10 }}>
+                      Error al cargar los medicamentos
+                    </Text>
+                    <Text style={{ color: "#666", textAlign: "center" }}>
+                      {error}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={cargarPastillas}
+                      style={{
+                        marginTop: 12,
+                        paddingVertical: 10,
+                        paddingHorizontal: 16,
+                        backgroundColor: "#7A2C34",
+                        borderRadius: 8,
+                      }}
+                    >
+                      <Text style={{ color: "#fff", fontWeight: "600" }}>
+                        Reintentar
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <FlatList
+                    style={{ flex: 1 }}
+                    data={filteredPastillas}
+                    keyExtractor={(item) =>
+                      item.remedio_global_id?.toString() ||
+                      Math.random().toString()
+                    }
+                    renderItem={renderPastillaItem}
+                    ListEmptyComponent={renderEmptyComponent}
+                    keyboardShouldPersistTaps="handled"
+                    showsVerticalScrollIndicator={true}
+                  />
+                )}
               </View>
             ) : (
               <ScrollView
@@ -3198,11 +3732,7 @@ const Medicamentos = ({ navigation }) => {
                   <View style={styles.step2Container}>
                     {/* Header del paso 2 */}
                     <View style={styles.step2Header}>
-                      <MaterialIcons
-                        name="edit"
-                        size={24}
-                        color="#7A2C34"
-                      />
+                      <MaterialIcons name="edit" size={24} color="#7A2C34" />
                       <View style={styles.step2HeaderContent}>
                         <Text style={styles.step2Title}>
                           {editandoProgramacion
@@ -3216,11 +3746,17 @@ const Medicamentos = ({ navigation }) => {
                         </Text>
                       </View>
                       {/* Corregido: props sueltos eliminados */}
-                       {/* Header con información del medicamento */}
+                      {/* Header con información del medicamento */}
                       <View style={styles.stepHeader}>
-                        <MaterialIcons name="medication" size={24} color="#7A2C34" />
+                        <MaterialIcons
+                          name="medication"
+                          size={24}
+                          color="#7A2C34"
+                        />
                         <View style={styles.stepHeaderContent}>
-                          <Text style={styles.stepHeaderTitle}>Medicamento seleccionado</Text>
+                          <Text style={styles.stepHeaderTitle}>
+                            Medicamento seleccionado
+                          </Text>
                           <Text style={styles.stepHeaderSubtitle}>
                             {selectedPastilla?.nombre_comercial}
                           </Text>
@@ -3274,21 +3810,13 @@ const Medicamentos = ({ navigation }) => {
                               )
                             : "Seleccionar fecha de finalización"}
                         </Text>
-                        <MaterialIcons
-                          name="event"
-                          size={20}
-                          color="#7A2C34"
-                        />
+                        <MaterialIcons name="event" size={20} color="#7A2C34" />
                       </TouchableOpacity>
                     </View>
 
                     {/* Información adicional */}
                     <View style={styles.infoContainer}>
-                      <MaterialIcons
-                        name="info"
-                        size={16}
-                        color="#666"
-                      />
+                      <MaterialIcons name="info" size={16} color="#666" />
                       <Text style={styles.infoText}>
                         Si no seleccionas una fecha de fin, el tratamiento se
                         programará por 30 días
@@ -3316,9 +3844,11 @@ const Medicamentos = ({ navigation }) => {
       {showTimePicker && (
         <DateTimePicker
           value={
-            horarioEditando !== null && programacionData.horarios[horarioEditando]
+            horarioEditando !== null &&
+            programacionData.horarios[horarioEditando]
               ? (() => {
-                  const horarioActual = programacionData.horarios[horarioEditando];
+                  const horarioActual =
+                    programacionData.horarios[horarioEditando];
                   if (horarioActual && horarioActual.hora) {
                     const [hours, minutes] = horarioActual.hora.split(":");
                     const date = new Date();
@@ -3358,9 +3888,12 @@ const Medicamentos = ({ navigation }) => {
       {/* Modal de detalles de pastilla */}
       {renderModalDetalles()}
       {renderDetallesProgramacion()}
-      
+
       {/* Renderizar el modal de selección de sonido */}
       {renderSoundPickerModal()}
+
+      {/* Renderizar el modal de configuración de notificaciones */}
+      {renderNotificationConfigModal()}
     </SafeAreaView>
   );
 };
@@ -3443,7 +3976,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 3.84,
     elevation: 5,
-    overflow: "hidden",
+    overflow: "visible",
     flexDirection: "column",
   },
   modalHeader: {
@@ -3488,21 +4021,21 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   closeButton: {
-    padding: 8,
-    borderRadius: 20,
+    padding: 10,
+    borderRadius: 25,
     backgroundColor: "#fff",
     shadowColor: "#000",
     shadowOffset: {
       width: 0,
-      height: 1,
+      height: 3,
     },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 4,
     borderWidth: 1,
-    borderColor: "#e9ecef",
-    minWidth: 36,
-    minHeight: 36,
+    borderColor: "#e2e8f0",
+    minWidth: 44,
+    minHeight: 44,
     justifyContent: "center",
     alignItems: "center",
   },
@@ -3542,107 +4075,172 @@ const styles = StyleSheet.create({
     padding: 5,
   },
   pastillasList: {
-    width: '100%',
+    width: "100%",
   },
   pastillasListContent: {
     paddingBottom: 100, // Espacio para los botones de navegación
   },
   tablaRow: {
-    flexDirection: 'row',
+    flexDirection: "row",
     borderBottomWidth: 1,
     borderLeftWidth: 1,
     borderRightWidth: 1,
-    borderColor: '#e0e0e0',
-    backgroundColor: '#fff',
+    borderColor: "#e2e8f0",
+    backgroundColor: "#fff",
   },
   tablaRowFirst: {
     borderTopWidth: 1,
-    borderTopLeftRadius: 8,
-    borderTopRightRadius: 8,
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
   },
   tablaRowLast: {
-    borderBottomLeftRadius: 8,
-    borderBottomRightRadius: 8,
+    borderBottomLeftRadius: 12,
+    borderBottomRightRadius: 12,
   },
   tablaCell: {
     flex: 1,
-    padding: 12,
-    justifyContent: 'center',
+    padding: 16,
+    justifyContent: "center",
     borderRightWidth: 1,
-    borderRightColor: '#e0e0e0',
+    borderRightColor: "#e2e8f0",
   },
   tablaCellText: {
-    fontSize: 16,
-    color: '#5C1A1F',
-    textAlign: 'center',
-    fontWeight: '600',
+    fontSize: 15,
+    color: "#7A2C34",
+    textAlign: "center",
+    fontWeight: "600",
   },
   diaText: {
-    fontSize: 16,
-    color: '#5C1A1F',
-    fontWeight: '600',
-    backgroundColor: '#F0E6E7',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 14,
-    overflow: 'hidden',
+    fontSize: 15,
+    color: "#7A2C34",
+    fontWeight: "700",
+    backgroundColor: "#f1f5f9",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 16,
+    overflow: "hidden",
     minWidth: 100,
-    textAlign: 'center',
+    textAlign: "center",
+    letterSpacing: 0.2,
   },
   horarioText: {
-    color: '#7A2C34',
-    fontWeight: 'bold',
-    backgroundColor: '#F7DAD9',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 14,
-    overflow: 'hidden',
-    fontSize: 16,
-    textAlign: 'center',
+    color: "#7A2C34",
+    fontWeight: "700",
+    backgroundColor: "#e2e8f0",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 16,
+    overflow: "hidden",
+    fontSize: 15,
+    letterSpacing: 0.1,
+    textAlign: "center",
     minWidth: 80,
-    alignSelf: 'center',
   },
-  tablaHeader: {
-    flexDirection: 'row',
-    backgroundColor: '#F7DAD9',
+  tablaHorizontalContainer: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    padding: 8,
+  },
+  diaHorarioCard: {
+    backgroundColor: "#fff",
+    borderRadius: 8,
+    marginBottom: 6,
+    marginHorizontal: 2,
+    minWidth: "45%",
+    maxWidth: "48%",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  diaHeaderHorizontal: {
+    backgroundColor: "#f1f5f9",
+    paddingVertical: 6,
+    paddingHorizontal: 12,
     borderTopLeftRadius: 8,
     borderTopRightRadius: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#e2e8f0",
+  },
+  diaTextHorizontal: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#7A2C34",
+    textAlign: "center",
+    letterSpacing: 0.2,
+  },
+  horariosListHorizontal: {
+    padding: 8,
+    alignItems: "center",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+  },
+  horarioTextHorizontal: {
+    color: "#7A2C34",
+    fontWeight: "600",
+    backgroundColor: "#e2e8f0",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    overflow: "hidden",
+    fontSize: 12,
+    textAlign: "center",
+    margin: 2,
+    minWidth: 50,
+  },
+  tablaHeader: {
+    flexDirection: "row",
+    backgroundColor: "#f1f5f9",
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: "#e2e8f0",
     borderBottomWidth: 0,
   },
   tablaHeaderCell: {
     flex: 1,
-    padding: 12,
-    justifyContent: 'center',
+    padding: 16,
+    justifyContent: "center",
     borderRightWidth: 1,
-    borderRightColor: '#e0e0e0',
+    borderRightColor: "#e2e8f0",
   },
   tablaHeaderText: {
-    fontSize: 16,
-    color: '#7A2C34',
-    textAlign: 'center',
-    fontFamily: 'System',
-    fontWeight: 'bold',
+    fontSize: 15,
+    color: "#7A2C34",
+    textAlign: "center",
+    fontFamily: "System",
+    fontWeight: "700",
+    letterSpacing: 0.3,
   },
   pastillaItem: {
-    backgroundColor: '#ffffff',
+    backgroundColor: "#ffffff",
     borderRadius: 12,
     padding: 16,
+    marginBottom: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
     marginVertical: 6,
     marginHorizontal: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    shadowColor: '#000',
+    flexDirection: "row",
+    alignItems: "center",
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05,
     shadowRadius: 3,
     elevation: 2,
     borderWidth: 1,
-    borderColor: '#f0f0f0',
+    borderColor: "#f0f0f0",
   },
   pastillaItemDisabled: {
-    backgroundColor: '#f9f9f9',
+    backgroundColor: "#f9f9f9",
     opacity: 0.7,
   },
   pastillaInfo: {
@@ -3650,67 +4248,67 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   pastillaHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 6,
   },
   pastillaNombre: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#1a1a1a',
+    fontWeight: "600",
+    color: "#1a1a1a",
     flexShrink: 1,
     marginRight: 8,
   },
   pastillaTipo: {
-    backgroundColor: '#f0f7ff',
+    backgroundColor: "#f0f7ff",
     borderRadius: 12,
     paddingHorizontal: 8,
     paddingVertical: 2,
-    marginLeft: 'auto',
+    marginLeft: "auto",
   },
   pastillaTipoText: {
-    color: '#1a73e8',
+    color: "#1a73e8",
     fontSize: 11,
-    fontWeight: '600',
-    textTransform: 'uppercase',
+    fontWeight: "600",
+    textTransform: "uppercase",
     letterSpacing: 0.5,
   },
   pastillaDescripcion: {
     fontSize: 13.5,
-    color: '#4a5568',
+    color: "#4a5568",
     lineHeight: 20,
     marginBottom: 8,
   },
   pastillaDetails: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
     marginTop: 4,
     gap: 6,
   },
   pastillaPresentacion: {
     fontSize: 12.5,
-    color: '#4a5568',
-    backgroundColor: '#f0f4f8',
+    color: "#4a5568",
+    backgroundColor: "#f0f4f8",
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 8,
-    overflow: 'hidden',
+    overflow: "hidden",
   },
   pastillaPeso: {
     fontSize: 12.5,
-    color: '#2b6cb0',
-    backgroundColor: '#ebf8ff',
+    color: "#2b6cb0",
+    backgroundColor: "#ebf8ff",
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 8,
-    fontWeight: '500',
+    fontWeight: "500",
   },
   longPressHint: {
     fontSize: 11,
-    color: '#a0aec0',
+    color: "#a0aec0",
     marginTop: 8,
-    fontStyle: 'italic',
+    fontStyle: "italic",
   },
   pastillaArrow: {
     opacity: 0.7,
@@ -3754,18 +4352,18 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   retryButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#7A2C34',
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#7A2C34",
     paddingVertical: 10,
     paddingHorizontal: 20,
     borderRadius: 8,
     marginTop: 10,
   },
   retryButtonText: {
-    color: '#fff',
+    color: "#fff",
     marginLeft: 8,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   emptySubtext: {
     marginTop: 8,
@@ -3777,191 +4375,234 @@ const styles = StyleSheet.create({
   // Estilos para el modal
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "flex-end",
+  },
+  modalOverlayCentered: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
   },
   modalContent: {
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    height: '90%',
-    width: '100%',
-    flexDirection: 'column',
-    overflow: 'hidden',
+    height: "90%",
+    width: "100%",
+    flexDirection: "column",
+    overflow: "hidden",
     // Asegurar que el modal esté por encima de otros elementos
     elevation: 5,
     zIndex: 1000,
   },
   modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
+    borderBottomColor: "#e2e8f0",
   },
   stepContainer: {
     flex: 1,
-    backgroundColor: '#fff',
-    width: '100%',
-    flexDirection: 'column',
-    overflow: 'hidden',
+    backgroundColor: "#fff",
+    width: "100%",
+    flexDirection: "column",
+    overflow: "visible",
     // Asegurar que el contenedor ocupe todo el espacio disponible
-    minHeight: '100%',
+    minHeight: "100%",
   },
   medicamentosListContainer: {
     flex: 1,
-    backgroundColor: '#fff',
-    width: '100%',
-    overflow: 'hidden',
-    // Asegurar que el contenedor de la lista ocupe todo el espacio restante
-    flexGrow: 1,
+    width: "100%",
+    backgroundColor: "#FFFFFF",
   },
   listContainer: {
     flexGrow: 1,
-    padding: 12,
+    paddingTop: 12,
     paddingBottom: 24,
-    // Asegurar que el contenedor de la lista pueda crecer según sea necesario
-    minHeight: '100%',
-    // Asegurar que el contenido se muestre correctamente
-    justifyContent: 'flex-start',
+    justifyContent: "flex-start",
   },
   modalDetallesHeaderContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     flex: 1,
   },
+  modalDetallesContent: {
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    width: "95%",
+    maxHeight: "90%",
+    overflow: "hidden",
+    elevation: 10,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+  },
+  modalDetallesHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 24,
+    paddingVertical: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f1f5f9",
+    backgroundColor: "#fafafa",
+  },
   modalDetallesTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#7A2C34',
-    marginLeft: 10,
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#1e293b",
+    marginLeft: 12,
+    letterSpacing: 0.3,
   },
   modalDetallesBody: {
-    maxHeight: '70%',
+    maxHeight: "85%",
   },
   modalDetallesBodyContent: {
-    padding: 20,
+    padding: 24,
+    alignItems: 'center',
   },
   modalDetallesFooter: {
     padding: 15,
     borderTopWidth: 1,
-    borderTopColor: '#e9ecef',
-    backgroundColor: '#fff',
+    borderTopColor: "#e9ecef",
+    backgroundColor: "#fff",
   },
   medicamentoCard: {
-    backgroundColor: '#f8f9fa',
-    borderRadius: 12,
-    padding: 20,
-    alignItems: 'center',
-    marginBottom: 20,
+    backgroundColor: "#f8fafc",
+    borderRadius: 16,
+    padding: 24,
+    alignItems: "center",
+    marginBottom: 24,
     borderWidth: 1,
-    borderColor: '#e9ecef',
+    borderColor: "#e2e8f0",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
   },
   medicamentoNombre: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginTop: 10,
-    textAlign: 'center',
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#1e293b",
+    marginTop: 12,
+    textAlign: "center",
+    letterSpacing: 0.2,
   },
   detallesContainer: {
-    marginBottom: 20,
+    marginBottom: 24,
+    width: "100%",
   },
   detalleItem: {
-    flexDirection: 'row',
-    marginBottom: 15,
-    alignItems: 'flex-start',
+    flexDirection: "row",
+    marginBottom: 18,
+    alignItems: "flex-start",
+    backgroundColor: "#ffffff",
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#f1f5f9",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    elevation: 1,
   },
   detalleContent: {
     flex: 1,
-    marginLeft: 10,
+    marginLeft: 12,
   },
   detalleLabel: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#666',
-    marginBottom: 4,
+    fontWeight: "600",
+    color: "#64748b",
+    marginBottom: 6,
+    letterSpacing: 0.1,
   },
   detalleValue: {
-    fontSize: 14,
-    color: '#333',
-    lineHeight: 20,
+    fontSize: 15,
+    color: "#1e293b",
+    lineHeight: 22,
+    fontWeight: "500",
   },
   seleccionarButton: {
-    backgroundColor: '#7A2C34',
+    backgroundColor: "#7A2C34",
     borderRadius: 25,
     padding: 15,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
   },
   seleccionarButtonText: {
-    color: '#fff',
+    color: "#fff",
     fontSize: 16,
-    fontWeight: 'bold',
+    fontWeight: "bold",
     marginLeft: 10,
   },
-  
+
   // Estilos para los botones de navegación
   navigationButtonsContainer: {
     padding: 16,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     borderTopWidth: 1,
-    borderTopColor: '#e2e8f0',
-    marginTop: 'auto',
+    borderTopColor: "#e2e8f0",
+    marginTop: "auto",
   },
   navButtonsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    width: '100%',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    width: "100%",
   },
   navButton: {
     flex: 1,
     paddingVertical: 14,
     borderRadius: 8,
-    alignItems: 'center',
-    backgroundColor: '#4a5568', // Gris oscuro para el botón Atrás
+    alignItems: "center",
+    backgroundColor: "#4a5568", // Gris oscuro para el botón Atrás
   },
   navButtonPrimary: {
-    backgroundColor: '#7A2C34', // Color bordo para el botón Continuar
+    backgroundColor: "#7A2C34", // Color bordo para el botón Continuar
   },
   navButtonText: {
-    color: '#fff',
+    color: "#fff",
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   navButtonTextPrimary: {
-    color: '#fff',
+    color: "#fff",
   },
 
   // Estilos para la barra de búsqueda
   searchContainer: {
-    width: '100%',
+    width: "100%",
     padding: 12,
     paddingBottom: 8,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
+    borderBottomColor: "#e2e8f0",
     // Asegurar que la barra de búsqueda esté por encima de la lista
     zIndex: 2,
     // Evitar que la barra de búsqueda se encoja
     flexShrink: 0,
   },
   searchInputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f5f5f5',
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f5f5f5",
     borderRadius: 25,
     paddingHorizontal: 16,
     height: 48,
-    width: '100%',
+    width: "100%",
   },
   searchInput: {
     flex: 1,
-    height: '100%',
+    height: "100%",
     marginLeft: 8,
-    color: '#2d3748',
+    color: "#2d3748",
     fontSize: 15,
   },
   clearButton: {
@@ -3971,84 +4612,91 @@ const styles = StyleSheet.create({
   // Contenedor principal de la lista de medicamentos
   medicamentosListContainer: {
     flex: 1,
-    backgroundColor: '#fff',
-    width: '100%',
+    width: "100%",
+    backgroundColor: "#FFFFFF",
   },
   // Contenedor de los items de la lista
   listContainer: {
     flexGrow: 1,
-    padding: 12,
-    paddingBottom: 24,
+    backgroundColor: "#FFFFFF",
   },
-  pastillaItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
+  debugText: {
+    fontSize: 12,
+    color: "#666",
+    padding: 8,
+    backgroundColor: "#f8f9fa",
+    borderBottomWidth: 1,
+    borderBottomColor: "#e0e0e0",
+  },
+  // Estilos para las tarjetas de pastillas (nuevo diseño)
+  pastillaCard: {
+    backgroundColor: "#FFFFFF",
     borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
+    marginHorizontal: 16,
+    marginVertical: 6,
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
     shadowRadius: 4,
-    elevation: 2,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: "#F3F4F6",
   },
-  pastillaInfo: {
+  pastillaCardContent: {
+    padding: 16,
+  },
+  pastillaCardHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  pastillaCardNombre: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#111827",
     flex: 1,
-    marginRight: 12,
-  },
-  pastillaNombre: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#2d3748',
-    marginBottom: 4,
-  },
-  pastillaDescripcion: {
-    fontSize: 14,
-    color: '#718096',
-    marginBottom: 6,
-  },
-  pastillaDetails: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 6,
-    flexWrap: 'wrap',
-  },
-  pastillaPresentacion: {
-    fontSize: 13,
-    color: '#4a5568',
-    backgroundColor: '#edf2f7',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
     marginRight: 8,
   },
-  pastillaPeso: {
-    fontSize: 13,
-    color: '#4a5568',
+  pastillaCardDescripcion: {
+    fontSize: 14,
+    color: "#6B7280",
+    marginBottom: 8,
+    fontStyle: "italic",
   },
-  longPressHint: {
-    fontSize: 11,
-    color: '#a0aec0',
-    marginTop: 4,
-    fontStyle: 'italic',
+  pastillaCardDetails: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
   },
-  
-  // Contenedor principal de la lista de medicamentos
-  medicamentosListContainer: {
-    flex: 1,
-    width: '100%',
-    backgroundColor: '#f8f9fa',
+  pastillaCardTipo: {
+    fontSize: 14,
+    color: "#374151",
+    fontWeight: "500",
   },
-  
+  pastillaCardDosis: {
+    fontSize: 14,
+    color: "#374151",
+    fontWeight: "500",
+  },
+  pastillaCardInstruction: {
+    fontSize: 12,
+    color: "#9CA3AF",
+    fontStyle: "italic",
+  },
+
   sectionHeader: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#4a5568',
+    fontWeight: "600",
+    color: "#4a5568",
     padding: 12,
-    backgroundColor: '#f8f9fa',
+    backgroundColor: "#f8f9fa",
     borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
+    borderBottomColor: "#e2e8f0",
     marginBottom: 8,
   },
 
@@ -4056,27 +4704,27 @@ const styles = StyleSheet.create({
   configuracionContainer: {
     flex: 1,
     padding: 24, // Añadido padding para consistencia con el paso 2
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     borderRadius: 16,
     margin: 16,
-    shadowColor: 'rgba(0, 0, 0, 0.08)',
+    shadowColor: "rgba(0, 0, 0, 0.08)",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 1,
     shadowRadius: 16,
     elevation: 3,
     borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.04)',
+    borderColor: "rgba(0, 0, 0, 0.04)",
   },
-  
+
   // Estilos para la sección de días seleccionados
   inputContainer: {
     marginBottom: 24,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 18,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    shadowColor: 'rgba(0, 0, 0, 0.05)',
+    borderColor: "#e2e8f0",
+    shadowColor: "rgba(0, 0, 0, 0.05)",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 1,
     shadowRadius: 6,
@@ -4084,25 +4732,25 @@ const styles = StyleSheet.create({
   },
   inputLabel: {
     fontSize: 15,
-    fontWeight: '700',
-    color: '#7A2C34',
+    fontWeight: "700",
+    color: "#7A2C34",
     marginBottom: 12,
-    textTransform: 'uppercase',
+    textTransform: "uppercase",
     letterSpacing: 0.5,
   },
   diasSeleccionadosText: {
     fontSize: 16,
-    color: '#2d3748',
+    color: "#2d3748",
     lineHeight: 24,
-    backgroundColor: '#f8f9fa',
+    backgroundColor: "#f8f9fa",
     padding: 14,
     borderRadius: 10,
     borderLeftWidth: 4,
-    borderLeftColor: '#7A2C34',
-    fontFamily: 'System',
-    fontWeight: '500',
+    borderLeftColor: "#7A2C34",
+    fontFamily: "System",
+    fontWeight: "500",
   },
-  
+
   // Estilos para la sección de horarios
   horariosContainer: {
     marginBottom: 24,
@@ -4111,49 +4759,49 @@ const styles = StyleSheet.create({
     gap: 16, // Añade espacio entre los elementos hijos
   },
   horariosTitleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 12,
   },
   horariosTitle: {
     fontSize: 18,
-    fontWeight: '600',
-    color: '#2d3748',
+    fontWeight: "600",
+    color: "#2d3748",
     marginLeft: 8,
   },
   horariosSubtitle: {
     fontSize: 14,
-    color: '#718096',
+    color: "#718096",
     marginBottom: 16,
     lineHeight: 20,
   },
-  
+
   // ====================================
   // Estilos para configuración
   configuracionContainer: {
     flex: 1,
     padding: 24, // Añadido padding para consistencia con el paso 2
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     borderRadius: 16,
     margin: 16,
-    shadowColor: 'rgba(0, 0, 0, 0.08)',
+    shadowColor: "rgba(0, 0, 0, 0.08)",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 1,
     shadowRadius: 16,
     elevation: 3,
     borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.04)',
+    borderColor: "rgba(0, 0, 0, 0.04)",
   },
 
   // Estilos para la sección de días seleccionados
   inputContainer: {
     marginBottom: 24,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 18,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    shadowColor: 'rgba(0, 0, 0, 0.05)',
+    borderColor: "#e2e8f0",
+    shadowColor: "rgba(0, 0, 0, 0.05)",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 1,
     shadowRadius: 6,
@@ -4161,23 +4809,23 @@ const styles = StyleSheet.create({
   },
   inputLabel: {
     fontSize: 15,
-    fontWeight: '700',
-    color: '#7A2C34',
+    fontWeight: "700",
+    color: "#7A2C34",
     marginBottom: 12,
-    textTransform: 'uppercase',
+    textTransform: "uppercase",
     letterSpacing: 0.5,
   },
   diasSeleccionadosText: {
     fontSize: 16,
-    color: '#2d3748',
+    color: "#2d3748",
     lineHeight: 24,
-    backgroundColor: '#f8f9fa',
+    backgroundColor: "#f8f9fa",
     padding: 14,
     borderRadius: 10,
     borderLeftWidth: 4,
-    borderLeftColor: '#7A2C34',
-    fontFamily: 'System',
-    fontWeight: '500',
+    borderLeftColor: "#7A2C34",
+    fontFamily: "System",
+    fontWeight: "500",
   },
 
   // Estilos para la sección de horarios
@@ -4185,337 +4833,337 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   horariosTitleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 12,
   },
   horariosTitle: {
     fontSize: 18,
-    fontWeight: '600',
-    color: '#2d3748',
+    fontWeight: "600",
+    color: "#2d3748",
     marginLeft: 8,
   },
   horariosSubtitle: {
     fontSize: 14,
-    color: '#718096',
+    color: "#718096",
     marginBottom: 16,
     lineHeight: 20,
   },
 
-// ====================================
+  // ====================================
 
-// ESTILOS DE HORARIOS
-// ====================================
+  // ESTILOS DE HORARIOS
+  // ====================================
 
-// Contenedor del horario (área clickeable)
-horarioItem: {
-flex: 1,
-flexDirection: 'row',
-alignItems: 'center',
-},
-
-// Línea vertical izquierda
-horarioLeftBorder: {
-  position: 'absolute',
-  left: 0,
-  top: 0,
-  bottom: 0,
-  width: 4,
-  backgroundColor: '#7A2C34',
-},
-
-// Contenido del horario
-horarioContent: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  paddingLeft: 20,
-  paddingRight: 12,
-  height: '100%',
-  flex: 1,
-},
-
-// Botón del horario (área clickeable)
-horaButton: {
-flexDirection: 'row',
-alignItems: 'center',
-justifyContent: 'center',
-backgroundColor: 'transparent',
-borderRadius: 8,
-padding: 10,
-},
-
-// Texto de la hora
-horarioHora: {
-  fontSize: 22,
-  fontWeight: '600',
-  color: '#1a202c',
-  marginLeft: 12,
-  fontVariant: ['tabular-nums'],
-  paddingVertical: 4,
-},
-
-// Detalles del horario (dosis)
-horarioDetails: {
-marginTop: 4,
-alignItems: 'center',
-},
-
-// Texto de la dosis
-horarioDosisText: {
-fontSize: 16,
-fontWeight: '500',
-color: '#4a5568',
-},
-
-// Botón de eliminar horario
-deleteButton: {
-  position: 'absolute',
-  right: 0,
-  top: 0,
-  bottom: 0,
-  padding: 8,
-  marginRight: 8,
-  alignItems: 'center',
-  justifyContent: 'center',
-},
-
-// Contenedor cuando no hay horarios
-noHorariosContainer: {
-alignItems: 'center',
-padding: 24,
-backgroundColor: '#f8f9fa',
-borderRadius: 12,
-borderWidth: 1,
-borderColor: '#e2e8f0',
-borderStyle: 'dashed',
-},
-
-// Textos cuando no hay horarios
-noHorariosText: {
-fontSize: 16,
-fontWeight: '500',
-color: '#4a5568',
-marginTop: 12,
-textAlign: 'center',
-},
-noHorariosSubtext: {
-fontSize: 14,
-color: '#a0aec0',
-marginTop: 4,
-textAlign: 'center',
-},
-
-// Botón para agregar nuevo horario
-agregarHorarioButton: {
-flexDirection: 'row',
-alignItems: 'center',
-justifyContent: 'center',
-backgroundColor: '#7A2C34',
-borderRadius: 12,
-padding: 16,
-marginTop: 16,
-shadowColor: 'rgba(122, 44, 52, 0.3)',
-shadowOffset: { width: 0, height: 2 },
-shadowOpacity: 1,
-shadowRadius: 4,
-elevation: 2,
-},
-agregarHorarioText: {
-color: '#fff',
-fontSize: 16,
-fontWeight: '600',
-marginLeft: 8,
-},
-stepHeader: {
-flexDirection: "row",
-alignItems: "center",
-backgroundColor: "#f8f9fa",
-padding: 16,
-borderRadius: 12,
-marginBottom: 24,
-borderLeftWidth: 4,
-borderLeftColor: "#7A2C34",
-},
-stepHeaderContent: {
-marginLeft: 12,
-flex: 1,
-},
-stepHeaderTitle: {
-fontSize: 14,
-fontWeight: "600",
-color: "#495057",
-marginBottom: 4,
-},
-stepHeaderSubtitle: {
-fontSize: 18,
-fontWeight: "bold",
-color: "#7A2C34",
-},
-step2Header: {
-marginBottom: 24,
-paddingBottom: 20,
-borderBottomWidth: 1,
-borderBottomColor: 'rgba(0, 0, 0, 0.04)',
-paddingTop: 4,
-},
-step2HeaderContent: {
-marginBottom: 20,
-marginTop: 8,
-},
-step2Title: {
-fontSize: 22,
-fontWeight: '700',
-color: '#2c3e50',
-marginBottom: 6,
-fontFamily: 'System',
-letterSpacing: -0.1,
-lineHeight: 28,
-},
-diasSection: {
-marginBottom: 20,
-},
-sectionHeader: {
-flexDirection: "row",
-alignItems: "center",
-marginBottom: 8,
-},
-sectionTitle: {
-fontSize: 18,
-fontWeight: "bold",
-color: "#333",
-marginLeft: 8,
-},
-sectionDescription: {
-fontSize: 14,
-color: "#666",
-marginBottom: 20,
-lineHeight: 20,
-},
-diasGrid: {
-flexDirection: "row",
-flexWrap: "wrap",
-justifyContent: "space-between",
-gap: 16, // Aumentado de 12 a 16 para más espacio entre elementos
-marginBottom: 8, // Añadido margen inferior para separación vertical
-},
-diaCard: {
-width: "30%",
-backgroundColor: "#ffffff",
-borderRadius: 12,
-marginBottom: 8, // Añadido margen inferior para separación vertical adicional
-padding: 16,
-alignItems: "center",
-justifyContent: "center",
-borderWidth: 2,
-borderColor: "#e9ecef",
-shadowColor: "#000",
-shadowOffset: {
-width: 0,
-height: 2,
-},
-shadowOpacity: 0.08,
-shadowRadius: 4,
-elevation: 2,
-minHeight: 80,
-},
-diaCardSelected: {
-backgroundColor: "#7A2C34",
-borderColor: "#7A2C34",
-shadowOpacity: 0.15,
-elevation: 4,
-},
-diaCardText: {
-fontSize: 16,
-fontWeight: "bold",
-color: "#7A2C34",
-marginTop: 6,
-marginBottom: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
+  // Contenedor del horario (área clickeable)
+  horarioItem: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
   },
-  
+
+  // Línea vertical izquierda
+  horarioLeftBorder: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 4,
+    backgroundColor: "#7A2C34",
+  },
+
+  // Contenido del horario
+  horarioContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingLeft: 20,
+    paddingRight: 12,
+    height: "100%",
+    flex: 1,
+  },
+
   // Botón del horario (área clickeable)
   horaButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'transparent',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "transparent",
     borderRadius: 8,
     padding: 10,
   },
-  
+
   // Texto de la hora
   horarioHora: {
-    fontSize: 40,
-    fontWeight: '600',
-    color: '#2d3748',
-    textAlign: 'center',
+    fontSize: 22,
+    fontWeight: "600",
+    color: "#1a202c",
+    marginLeft: 12,
+    fontVariant: ["tabular-nums"],
+    paddingVertical: 4,
   },
-  
+
   // Detalles del horario (dosis)
   horarioDetails: {
     marginTop: 4,
-    alignItems: 'center',
+    alignItems: "center",
   },
-  
+
   // Texto de la dosis
   horarioDosisText: {
     fontSize: 16,
-    fontWeight: '500',
-    color: '#4a5568',
+    fontWeight: "500",
+    color: "#4a5568",
+  },
+
+  // Botón de eliminar horario
+  deleteButton: {
+    position: "absolute",
+    right: 0,
+    top: 0,
+    bottom: 0,
+    padding: 8,
+    marginRight: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  // Contenedor cuando no hay horarios
+  noHorariosContainer: {
+    alignItems: "center",
+    padding: 24,
+    backgroundColor: "#f8f9fa",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    borderStyle: "dashed",
+  },
+
+  // Textos cuando no hay horarios
+  noHorariosText: {
+    fontSize: 16,
+    fontWeight: "500",
+    color: "#4a5568",
+    marginTop: 12,
+    textAlign: "center",
+  },
+  noHorariosSubtext: {
+    fontSize: 14,
+    color: "#a0aec0",
+    marginTop: 4,
+    textAlign: "center",
+  },
+
+  // Botón para agregar nuevo horario
+  agregarHorarioButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#7A2C34",
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 16,
+    shadowColor: "rgba(122, 44, 52, 0.3)",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  agregarHorarioText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
+    marginLeft: 8,
+  },
+  stepHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f8f9fa",
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 24,
+    borderLeftWidth: 4,
+    borderLeftColor: "#7A2C34",
+  },
+  stepHeaderContent: {
+    marginLeft: 12,
+    flex: 1,
+  },
+  stepHeaderTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#495057",
+    marginBottom: 4,
+  },
+  stepHeaderSubtitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#7A2C34",
+  },
+  step2Header: {
+    marginBottom: 24,
+    paddingBottom: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(0, 0, 0, 0.04)",
+    paddingTop: 4,
+  },
+  step2HeaderContent: {
+    marginBottom: 20,
+    marginTop: 8,
+  },
+  step2Title: {
+    fontSize: 22,
+    fontWeight: "700",
+    color: "#2c3e50",
+    marginBottom: 6,
+    fontFamily: "System",
+    letterSpacing: -0.1,
+    lineHeight: 28,
+  },
+  diasSection: {
+    marginBottom: 20,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#333",
+    marginLeft: 8,
+  },
+  sectionDescription: {
+    fontSize: 14,
+    color: "#666",
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+  diasGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    gap: 16, // Aumentado de 12 a 16 para más espacio entre elementos
+    marginBottom: 8, // Añadido margen inferior para separación vertical
+  },
+  diaCard: {
+    width: "30%",
+    backgroundColor: "#ffffff",
+    borderRadius: 12,
+    marginBottom: 8, // Añadido margen inferior para separación vertical adicional
+    padding: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "#e9ecef",
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
+    minHeight: 80,
+  },
+  diaCardSelected: {
+    backgroundColor: "#7A2C34",
+    borderColor: "#7A2C34",
+    shadowOpacity: 0.15,
+    elevation: 4,
+  },
+  diaCardText: {
+    fontSize: 16,
+    fontWeight: "bold",
+    color: "#7A2C34",
+    marginTop: 6,
+    marginBottom: 2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  // Botón del horario (área clickeable)
+  horaButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "transparent",
+    borderRadius: 8,
+    padding: 10,
+  },
+
+  // Texto de la hora
+  horarioHora: {
+    fontSize: 40,
+    fontWeight: "600",
+    color: "#2d3748",
+    textAlign: "center",
+  },
+
+  // Detalles del horario (dosis)
+  horarioDetails: {
+    marginTop: 4,
+    alignItems: "center",
+  },
+
+  // Texto de la dosis
+  horarioDosisText: {
+    fontSize: 16,
+    fontWeight: "500",
+    color: "#4a5568",
   },
 
   // Estilos para el paso de confirmación
   confirmacionContainer: {
     flex: 1,
     padding: 0,
-    backgroundColor: '#f8f9fa',
+    backgroundColor: "#f8f9fa",
   },
   confirmacionContentContainer: {
     padding: 16,
     paddingBottom: 80, // Espacio para los botones de navegación
   },
   confirmacionHeaderCard: {
-    backgroundColor: '#7A2C34',
+    backgroundColor: "#7A2C34",
     borderRadius: 12,
     padding: 20,
-    alignItems: 'center',
+    alignItems: "center",
     marginBottom: 16,
     marginTop: 8,
     elevation: 4,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 8,
   },
   confirmacionHeaderIcon: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
     width: 60,
     height: 60,
     borderRadius: 30,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
     marginBottom: 12,
   },
   confirmacionTitulo: {
     fontSize: 22,
-    fontWeight: '700',
-    color: '#fff',
-    textAlign: 'center',
+    fontWeight: "700",
+    color: "#fff",
+    textAlign: "center",
     marginBottom: 8,
   },
   confirmacionSubtitulo: {
     fontSize: 15,
-    color: 'rgba(255, 255, 255, 0.9)',
-    textAlign: 'center',
+    color: "rgba(255, 255, 255, 0.9)",
+    textAlign: "center",
   },
   infoCard: {
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 16,
     marginBottom: 16,
     elevation: 1,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 3,
@@ -4528,13 +5176,13 @@ marginBottom: 2,
   },
   medicamentoNombre: {
     fontSize: 18,
-    fontWeight: '600',
-    color: '#1a202c',
+    fontWeight: "600",
+    color: "#1a202c",
     marginBottom: 8,
   },
   infoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginTop: 4,
   },
   infoIcon: {
@@ -4542,85 +5190,84 @@ marginBottom: 2,
   },
   infoText: {
     fontSize: 15,
-    color: '#4a5568',
+    color: "#4a5568",
   },
   infoHighlight: {
     fontSize: 15,
-    color: '#2d3748',
-    fontWeight: '500',
+    color: "#2d3748",
+    fontWeight: "500",
   },
   divider: {
     height: 1,
-    backgroundColor: '#edf2f7',
+    backgroundColor: "#edf2f7",
     marginVertical: 16,
   },
   diasGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
     margin: 8,
   },
   diaPill: {
-    width: '14%',
+    width: "14%",
     aspectRatio: 1,
     borderRadius: 50,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
     marginBottom: 8,
   },
   diaSeleccionado: {
-    backgroundColor: '#7A2C34',
+    backgroundColor: "#7A2C34",
   },
   diaNoSeleccionado: {
-    backgroundColor: '#f0f0f0',
+    backgroundColor: "#f0f0f0",
   },
   diaText: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   diaTextSeleccionado: {
-    color: '#fff',
+    color: "#fff",
   },
   horariosGrid: {
     marginTop: 8,
   },
   horarioHora: {
     fontSize: 16,
-    fontWeight: '500',
-    color: '#2d3748',
+    fontWeight: "500",
+    color: "#2d3748",
     marginLeft: 12,
   },
   horarioDosisBadge: {
-    backgroundColor: '#7A2C34',
+    backgroundColor: "#7A2C34",
     width: 28,
     height: 28,
     borderRadius: 14,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
   },
   horarioDosisText: {
-    color: '#fff',
-    fontWeight: 'bold',
+    color: "#fff",
+    fontWeight: "bold",
     fontSize: 14,
   },
   notaContainer: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(122, 44, 52, 0.1)',
+    flexDirection: "row",
+    backgroundColor: "rgba(122, 44, 52, 0.1)",
     borderRadius: 12,
     padding: 12,
-    alignItems: 'flex-start',
-    marginTop: 8,
+    alignItems: "flex-start",
   },
   notaTexto: {
     flex: 1,
     marginLeft: 10,
-    color: '#4a5568',
+    color: "#4a5568",
     fontSize: 14,
     lineHeight: 20,
   },
   confirmacionBotonesContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    justifyContent: "space-between",
     marginTop: 16,
     marginBottom: 8,
     paddingHorizontal: 16,
@@ -4628,95 +5275,95 @@ marginBottom: 2,
   },
   cancelarButton: {
     flex: 1,
-    backgroundColor: '#f0f0f0',
+    backgroundColor: "#f0f0f0",
     borderRadius: 12,
     padding: 16,
-    alignItems: 'center',
+    alignItems: "center",
     marginRight: 8,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: "#e2e8f0",
   },
   cancelarButtonText: {
-    color: '#4a5568',
-    fontWeight: '600',
+    color: "#4a5568",
+    fontWeight: "600",
     fontSize: 16,
   },
   confirmarButton: {
     flex: 2,
-    backgroundColor: '#7A2C34',
+    backgroundColor: "#7A2C34",
     borderRadius: 12,
     padding: 16,
-    alignItems: 'center',
+    alignItems: "center",
     marginLeft: 8,
-    flexDirection: 'row',
-    justifyContent: 'center',
+    flexDirection: "row",
+    justifyContent: "center",
   },
   confirmarButtonText: {
-    color: '#fff',
-    fontWeight: '600',
+    color: "#fff",
+    fontWeight: "600",
     fontSize: 16,
-    textAlign: 'center',
+    textAlign: "center",
   },
-  
+
   // Contenedor cuando no hay horarios
   noHorariosContainer: {
-    alignItems: 'center',
+    alignItems: "center",
     padding: 24,
-    backgroundColor: '#f8f9fa',
+    backgroundColor: "#f8f9fa",
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderStyle: 'dashed',
+    borderColor: "#e2e8f0",
+    borderStyle: "dashed",
   },
-  
+
   // Textos cuando no hay horarios
   noHorariosText: {
     fontSize: 16,
-    fontWeight: '500',
-    color: '#4a5568',
+    fontWeight: "500",
+    color: "#4a5568",
     marginTop: 12,
-    textAlign: 'center',
+    textAlign: "center",
   },
   noHorariosSubtext: {
     fontSize: 14,
-    color: '#a0aec0',
+    color: "#a0aec0",
     marginTop: 4,
-    textAlign: 'center',
+    textAlign: "center",
   },
-  
+
   // Botón para agregar nuevo horario
   agregarHorarioButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#7A2C34',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#7A2C34",
     borderRadius: 12,
     padding: 16,
     marginTop: 16,
-    shadowColor: 'rgba(122, 44, 52, 0.3)',
+    shadowColor: "rgba(122, 44, 52, 0.3)",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 1,
     shadowRadius: 4,
     elevation: 2,
   },
   agregarHorarioText: {
-    color: '#fff',
+    color: "#fff",
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   // Estilos para el contenedor del paso
   stepContainer: {
     marginTop: 32,
-    width: '100%',
+    width: "100%",
     marginBottom: 16,
     paddingHorizontal: 16, // Add horizontal padding
   },
   stepHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 16,
     padding: 12,
-    backgroundColor: '#F8F9FA',
+    backgroundColor: "#F8F9FA",
     borderRadius: 8,
     marginHorizontal: 16, // Add horizontal margin to match the container
   },
@@ -4725,39 +5372,39 @@ marginBottom: 2,
   },
   stepHeaderTitle: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#5C1A1F',
+    fontWeight: "600",
+    color: "#5C1A1F",
   },
   stepHeaderSubtitle: {
     fontSize: 14,
-    color: '#7A2C34',
-    fontWeight: '700',
+    color: "#7A2C34",
+    fontWeight: "700",
   },
   infoCard: {
-    backgroundColor: '#FFF',
+    backgroundColor: "#FFF",
     borderRadius: 12,
     padding: 16,
     marginBottom: 16,
     marginHorizontal: 16, // Add horizontal margin to match the container
     borderWidth: 1,
-    borderColor: '#E9ECEF',
+    borderColor: "#E9ECEF",
   },
   infoCardRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 8,
   },
   infoCardLabel: {
     fontSize: 14,
-    color: '#6C757D',
+    color: "#6C757D",
     marginLeft: 8,
     marginRight: 8,
     minWidth: 130,
   },
   infoCardValue: {
     fontSize: 14,
-    color: '#212529',
-    fontWeight: '500',
+    color: "#212529",
+    fontWeight: "500",
     flex: 1,
   },
   stepHeader: {
@@ -4789,7 +5436,7 @@ marginBottom: 2,
     marginBottom: 24,
     paddingBottom: 20,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(0, 0, 0, 0.04)',
+    borderBottomColor: "rgba(0, 0, 0, 0.04)",
     paddingTop: 4,
   },
   step2HeaderContent: {
@@ -4798,10 +5445,10 @@ marginBottom: 2,
   },
   step2Title: {
     fontSize: 22,
-    fontWeight: '700',
-    color: '#2c3e50',
+    fontWeight: "700",
+    color: "#2c3e50",
     marginBottom: 6,
-    fontFamily: 'System',
+    fontFamily: "System",
     letterSpacing: -0.1,
     lineHeight: 28,
   },
@@ -4920,23 +5567,23 @@ marginBottom: 2,
   },
   inputLabel: {
     fontSize: 15,
-    fontWeight: '600',
-    color: '#2c3e50',
+    fontWeight: "600",
+    color: "#2c3e50",
     marginBottom: 10,
-    fontFamily: 'System',
+    fontFamily: "System",
     letterSpacing: -0.1,
     lineHeight: 20,
   },
   textInput: {
     borderWidth: 1.5,
-    borderColor: '#e2e8f0',
+    borderColor: "#e2e8f0",
     borderRadius: 12,
     padding: 14,
     fontSize: 16,
-    backgroundColor: '#fff',
-    color: '#2c3e50',
-    fontFamily: 'System',
-    shadowColor: 'rgba(0,0,0,0.03)',
+    backgroundColor: "#fff",
+    color: "#2c3e50",
+    fontFamily: "System",
+    shadowColor: "rgba(0,0,0,0.03)",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 1,
     shadowRadius: 4,
@@ -4953,14 +5600,14 @@ marginBottom: 2,
   },
   dateInput: {
     borderWidth: 1.5,
-    borderColor: '#e2e8f0',
+    borderColor: "#e2e8f0",
     borderRadius: 12,
     padding: 14,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    shadowColor: 'rgba(0,0,0,0.03)',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: "#fff",
+    shadowColor: "rgba(0,0,0,0.03)",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 1,
     shadowRadius: 4,
@@ -4982,12 +5629,12 @@ marginBottom: 2,
   },
   dateInputText: {
     fontSize: 16,
-    color: '#2c3e50',
-    fontFamily: 'System',
+    color: "#2c3e50",
+    fontFamily: "System",
   },
   placeholderText: {
-    color: '#94a3b8',
-    fontFamily: 'System',
+    color: "#94a3b8",
+    fontFamily: "System",
     fontSize: 15,
   },
   detallesContainer: {
@@ -5009,24 +5656,24 @@ marginBottom: 2,
     textAlign: "center",
   },
   infoContainer: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: '#f8fafc',
+    flexDirection: "row",
+    alignItems: "flex-start",
+    backgroundColor: "#f8fafc",
     padding: 16,
     borderRadius: 12,
     marginTop: 24,
     borderLeftWidth: 4,
-    borderLeftColor: '#7A2C34',
+    borderLeftColor: "#7A2C34",
     borderWidth: 1,
-    borderColor: '#f1f5f9',
+    borderColor: "#f1f5f9",
   },
   infoText: {
     marginLeft: 12,
     fontSize: 14,
-    color: '#475569',
+    color: "#475569",
     lineHeight: 20,
     flex: 1,
-    fontFamily: 'System',
+    fontFamily: "System",
   },
   diasContainer: {
     marginBottom: 20,
@@ -5166,82 +5813,167 @@ marginBottom: 2,
   },
   // Estilos para el paso de configuración de alarmas
   stepHeader: {
-    marginBottom: 24,
-    paddingHorizontal: 8,
+    marginBottom: 20,
+    paddingHorizontal: 24,
+    paddingTop: 16,
   },
   stepTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#2C3E50',
-    marginBottom: 8,
+    fontSize: 26,
+    fontWeight: "800",
+    color: "#1E293B",
+    marginBottom: 6,
+    letterSpacing: -0.5,
+    fontFamily: 'System',
   },
   stepSubtitle: {
-    fontSize: 14,
-    color: '#7F8C8D',
-    lineHeight: 20,
+    fontSize: 15,
+    color: "#64748B",
+    lineHeight: 24,
+    paddingRight: 10,
+    fontFamily: 'System',
   },
-  alarmsContainer: {
-    flex: 1,
-  },
-  alarmItem: {
+  alarmConfigContainer: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: 20,
+    margin: 16,
+    marginHorizontal: 20,
     padding: 0,
-    marginBottom: 12,
+    shadowColor: 'rgba(0,0,0,0.1)',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 1,
+    shadowRadius: 16,
+    elevation: 5,
+    overflow: 'hidden',
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: 500,
+  },
+  alarmConfigButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    padding: 20,
+    backgroundColor: '#7A2C34',
+    borderBottomWidth: 0,
+  },
+  alarmConfigIcon: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  alarmConfigButtonContent: {
+    flex: 1,
+  },
+  alarmConfigButtonTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    marginBottom: 2,
+  },
+  alarmConfigButtonSubtitle: {
+    fontSize: 13.5,
+    color: 'rgba(255, 255, 255, 0.8)',
+  },
+  alarmsContainer: {
+    padding: 20,
+    paddingBottom: 12,
+  },
+  alarmItem: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    marginBottom: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     borderWidth: 1,
-    borderColor: '#EDEFF2',
-    overflow: 'hidden',
+    borderColor: "#F1F5F9",
+    overflow: "hidden",
+    shadowColor: "rgba(0,0,0,0.05)",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 1,
+    shadowRadius: 6,
+    elevation: 2,
+    width: '100%',
   },
   alarmContent: {
     flex: 1,
-    padding: 16,
+    padding: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
   alarmTimeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
   },
   soundIndicator: {
-    marginLeft: 8,
-    opacity: 0.8,
+    marginLeft: 10,
+    backgroundColor: "rgba(122, 44, 52, 0.1)",
+    padding: 8,
+    borderRadius: 10,
+    marginRight: 12,
   },
   alarmItemDisabled: {
-    opacity: 0.6,
+    opacity: 0.7,
+    backgroundColor: "#F8FAFC",
   },
   alarmTimeContainer: {
     flex: 1,
   },
   alarmTime: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#2C3E50',
-    marginBottom: 4,
+    fontSize: 24,
+    fontWeight: "700",
+    color: "#1E293B",
+    marginBottom: 6,
+    letterSpacing: 0.5,
+    fontFamily: 'System',
   },
   alarmDias: {
     fontSize: 13,
-    color: '#7F8C8D',
+    color: "#64748B",
+    backgroundColor: "#F8FAFC",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 10,
+    alignSelf: 'flex-start',
+    overflow: 'hidden',
+    fontWeight: '500',
+    fontFamily: 'System',
   },
   noAlarmsContainer: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     padding: 40,
+    backgroundColor: "#F8FAFC",
+    borderRadius: 20,
+    margin: 16,
+    borderWidth: 2,
+    borderColor: "rgba(122, 44, 52, 0.2)",
+    borderStyle: "dashed",
+    width: '100%',
+    alignSelf: 'center',
+    maxWidth: 500,
   },
   noAlarmsText: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#2C3E50',
-    marginTop: 16,
-    marginBottom: 8,
-    textAlign: 'center',
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#7A2C34",
+    marginTop: 20,
+    marginBottom: 10,
+    textAlign: "center",
+    fontFamily: 'System',
   },
   noAlarmsSubtext: {
-    fontSize: 14,
-    color: '#7F8C8D',
-    textAlign: 'center',
-    lineHeight: 20,
+    fontSize: 15,
+    color: "#64748B",
+    textAlign: "center",
+    lineHeight: 22,
+    paddingHorizontal: 20,
+    fontFamily: 'System',
   },
   emptyText: {
     fontSize: 16,
@@ -5251,7 +5983,7 @@ marginBottom: 2,
   },
   // Estilos para la sección de tomas de hoy
   tomasHoyContainer: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: "#FFFFFF",
     borderRadius: 10,
     padding: 15,
     margin: 15,
@@ -5263,38 +5995,38 @@ marginBottom: 2,
     shadowRadius: 1.41,
   },
   sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 15,
   },
   sectionTitle: {
     fontSize: 18,
-    fontWeight: '600',
-    color: '#343A40',
+    fontWeight: "600",
+    color: "#343A40",
     marginLeft: 10,
   },
   tomasList: {
     marginTop: 10,
   },
   tomaItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8F9FA',
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F8F9FA",
     borderRadius: 8,
     padding: 12,
     marginBottom: 10,
   },
   tomaHoraContainer: {
-    backgroundColor: '#7A2C34',
+    backgroundColor: "#7A2C34",
     borderRadius: 6,
     padding: 8,
     marginRight: 12,
     minWidth: 80,
-    alignItems: 'center',
+    alignItems: "center",
   },
   tomaHora: {
-    color: '#FFFFFF',
-    fontWeight: '600',
+    color: "#FFFFFF",
+    fontWeight: "600",
     fontSize: 14,
   },
   tomaInfo: {
@@ -5302,37 +6034,37 @@ marginBottom: 2,
   },
   tomaNombre: {
     fontSize: 16,
-    fontWeight: '500',
-    color: '#343A40',
+    fontWeight: "500",
+    color: "#343A40",
     marginBottom: 4,
   },
   tomaDescripcion: {
     fontSize: 14,
-    color: '#6C757D',
+    color: "#6C757D",
   },
   tomasTitulo: {
     fontSize: 18,
-    fontWeight: '600',
-    color: '#343A40',
+    fontWeight: "600",
+    color: "#343A40",
     marginBottom: 10,
   },
   tomaHora: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#7A2C34',
+    fontWeight: "600",
+    color: "#7A2C34",
   },
   tomaInfo: {
     flex: 1,
   },
   tomaNombre: {
     fontSize: 16,
-    fontWeight: '500',
-    color: '#343A40',
+    fontWeight: "500",
+    color: "#343A40",
     marginBottom: 2,
   },
   tomaDescripcion: {
     fontSize: 13,
-    color: '#6C757D',
+    color: "#6C757D",
   },
   // Estilos para resumen de días en la tarjeta de programación
   diasResumenContainer: {
@@ -5401,6 +6133,35 @@ marginBottom: 2,
     alignItems: "center",
     gap: 8,
   },
+  contextMenu: {
+    position: "absolute",
+    top: 44,
+    right: 10,
+    backgroundColor: "#fff",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#e9ecef",
+    elevation: 5,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    paddingVertical: 6,
+    zIndex: 20,
+  },
+  contextMenuItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    minWidth: 160,
+  },
+  contextMenuText: {
+    marginLeft: 8,
+    color: "#2d3748",
+    fontSize: 14,
+    fontWeight: "500",
+  },
   estadoBadge: {
     backgroundColor: "#7A2C34",
     paddingHorizontal: 12,
@@ -5456,136 +6217,161 @@ marginBottom: 2,
   step2Container: {
     flex: 1,
     padding: 24,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     borderRadius: 16,
     margin: 16,
-    shadowColor: 'rgba(0, 0, 0, 0.08)',
+    shadowColor: "rgba(0, 0, 0, 0.08)",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 1,
     shadowRadius: 16,
     elevation: 3,
     borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.04)',
+    borderColor: "rgba(0, 0, 0, 0.04)",
   },
   horariosDetalleContainer: {
-    marginTop: 20,
+    marginTop: 24,
     padding: 0,
-    backgroundColor: '#fff',
-    borderRadius: 12,
+    backgroundColor: "#fff",
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#f0f0f0',
-    overflow: 'hidden',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    borderColor: "#e2e8f0",
+    overflow: "hidden",
+    elevation: 4,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
   },
   horariosDetalleHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 15,
-    backgroundColor: '#faf5f5',
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 18,
+    backgroundColor: "#f8fafc",
     borderBottomWidth: 1,
-    borderBottomColor: '#f0e6e6',
+    borderBottomColor: "#e2e8f0",
   },
   horarioIcon: {
     marginRight: 10,
   },
   horariosDetalleTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#7A2C34',
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#1e293b",
+    letterSpacing: 0.2,
   },
   horariosGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexDirection: "row",
+    flexWrap: "wrap",
     padding: 10,
   },
   horarioItem: {
-    width: '50%',
+    width: "50%",
     padding: 10,
-  },
-  horarioItemContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff9f9',
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#f0e0e0',
+    alarmConfigContainer: {
+      flex: 1,
+      backgroundColor: '#FFFFFF',
+      borderRadius: 16,
+      marginHorizontal: 16,
+      padding: 16,
+      shadowColor: 'rgba(0,0,0,0.05)',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 1,
+      shadowRadius: 8,
+      elevation: 2,
+    },
+    alarmConfigContent: {
+      width: '100%',
+      maxWidth: 500,
+      alignSelf: 'center',
+    },
+    alarmConfigButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: '#FFFFFF',
+      borderRadius: 12,
+      padding: 16,
+      borderWidth: 1.5,
+      borderColor: '#EDEFF2',
+      width: '100%',
+    },
+    alarmConfigIcon: {
+      backgroundColor: 'rgba(122, 44, 52, 0.1)',
+      borderRadius: 10,
+      padding: 8,
+      marginRight: 12,
+    },
   },
   horarioHora: {
     fontSize: 15,
-    fontWeight: '600',
-    color: '#333',
+    fontWeight: "600",
+    color: "#333",
     marginLeft: 8,
   },
   dosisBadge: {
-    position: 'absolute',
+    position: "absolute",
     top: -5,
     right: 5,
-    backgroundColor: '#7A2C34',
+    backgroundColor: "#7A2C34",
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 10,
   },
   dosisText: {
-    color: '#fff',
+    color: "#fff",
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   confirmacionContainer: {
     flex: 1,
-    backgroundColor: '#f8f9fa',
+    backgroundColor: "#f8f9fa",
   },
   confirmacionContentContainer: {
     paddingBottom: 30,
   },
   confirmacionHeaderCard: {
-    backgroundColor: '#7A2C34',
+    backgroundColor: "#7A2C34",
     padding: 25,
     paddingTop: 40,
     borderBottomLeftRadius: 25,
     borderBottomRightRadius: 25,
     marginBottom: -15,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.1,
     shadowRadius: 8,
     elevation: 5,
   },
   confirmacionHeaderIcon: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
     width: 60,
     height: 60,
     borderRadius: 30,
-    justifyContent: 'center',
-    alignItems: 'center',
-    alignSelf: 'center',
+    justifyContent: "center",
+    alignItems: "center",
+    alignSelf: "center",
     marginBottom: 15,
   },
   confirmacionTitulo: {
     fontSize: 24,
-    fontWeight: 'bold',
-    color: '#fff',
-    textAlign: 'center',
+    fontWeight: "bold",
+    color: "#fff",
+    textAlign: "center",
     marginBottom: 8,
   },
   confirmacionSubtitulo: {
     fontSize: 15,
-    color: 'rgba(255, 255, 255, 0.85)',
-    textAlign: 'center',
+    color: "rgba(255, 255, 255, 0.85)",
+    textAlign: "center",
     lineHeight: 22,
     paddingHorizontal: 10,
   },
   infoCard: {
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     borderRadius: 20,
     padding: 20,
     margin: 20,
     marginTop: 30,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.1,
     shadowRadius: 10,
@@ -5595,22 +6381,22 @@ marginBottom: 2,
     marginBottom: 20,
   },
   sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 15,
   },
   sectionTitle: {
     fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
+    fontWeight: "600",
+    color: "#333",
     marginLeft: 10,
   },
   infoContent: {
     paddingLeft: 10,
   },
   infoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginTop: 8,
   },
   infoIcon: {
@@ -5618,114 +6404,114 @@ marginBottom: 2,
   },
   infoText: {
     fontSize: 15,
-    color: '#555',
+    color: "#555",
   },
   infoHighlight: {
     fontSize: 16,
-    color: '#7A2C34',
-    fontWeight: '600',
-    backgroundColor: '#FFE5E5',
+    color: "#7A2C34",
+    fontWeight: "600",
+    backgroundColor: "#FFE5E5",
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 10,
-    alignSelf: 'flex-start',
+    alignSelf: "flex-start",
   },
   medicamentoNombre: {
     fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
+    fontWeight: "bold",
+    color: "#333",
     marginBottom: 5,
   },
   divider: {
     height: 1,
-    backgroundColor: '#f0f0f0',
+    backgroundColor: "#f0f0f0",
     marginVertical: 15,
   },
   diasGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexDirection: "row",
+    flexWrap: "wrap",
     marginLeft: 5,
   },
   diaPill: {
     width: 50,
     height: 50,
     borderRadius: 25,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
     margin: 5,
-    backgroundColor: '#f8f9fa',
+    backgroundColor: "#f8f9fa",
     borderWidth: 1,
-    borderColor: '#e9ecef',
+    borderColor: "#e9ecef",
   },
   diaSeleccionado: {
-    backgroundColor: '#7A2C34',
-    borderColor: '#7A2C34',
+    backgroundColor: "#7A2C34",
+    borderColor: "#7A2C34",
   },
   diaNoSeleccionado: {
-    backgroundColor: '#f8f9fa',
+    backgroundColor: "#f8f9fa",
   },
   diaText: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#666',
+    fontWeight: "600",
+    color: "#666",
   },
   diaTextSeleccionado: {
-    color: '#fff',
+    color: "#fff",
   },
   horariosGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
     marginTop: 5,
   },
   horarioCard: {
-    width: '90%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f8f9fa',
+    width: "90%",
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f8f9fa",
     padding: 15,
     borderRadius: 15,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#eee',
+    borderColor: "#eee",
   },
   horarioHora: {
     fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
+    fontWeight: "bold",
+    color: "#333",
     marginLeft: 10,
     flex: 1,
   },
   horarioDosisBadge: {
-    backgroundColor: '#7A2C34',
+    backgroundColor: "#7A2C34",
     borderRadius: 12,
     width: 32,
     height: 32,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginLeft: 'auto',
+    justifyContent: "center",
+    alignItems: "center",
+    marginLeft: "auto",
   },
   horarioDosisText: {
-    color: '#fff',
+    color: "#fff",
     fontSize: 14,
-    fontWeight: 'bold',
+    fontWeight: "bold",
   },
   notaContainer: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: '#F8F1F1',
+    flexDirection: "row",
+    alignItems: "flex-start",
+    backgroundColor: "#F8F1F1",
     padding: 18,
     borderRadius: 15,
     marginHorizontal: 20,
     marginTop: 10,
     borderLeftWidth: 4,
-    borderLeftColor: '#7A2C34',
+    borderLeftColor: "#7A2C34",
   },
   notaTexto: {
     flex: 1,
     marginLeft: 12,
     fontSize: 14,
-    color: '#5E5E5E',
+    color: "#5E5E5E",
     lineHeight: 20,
   },
   confirmacionItem: {
@@ -5864,8 +6650,165 @@ marginBottom: 2,
   actionButtonText: {
     color: "#fff",
     fontSize: 14,
-    fontWeight: "bold"
-  }
+    fontWeight: "bold",
+  },
+  // Estilos para el modal de selección de sonido
+  soundModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  soundModalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    width: '100%',
+    maxWidth: 500,
+    padding: 0,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 15,
+    elevation: 10,
+    overflow: 'hidden',
+  },
+  soundModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    padding: 20,
+    backgroundColor: '#F8FAFC',
+  },
+  soundModalHeaderContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  soundModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1E293B',
+    marginLeft: 10,
+  },
+  soundModalSubtitle: {
+    fontSize: 14,
+    color: '#64748B',
+    paddingHorizontal: 20,
+    paddingTop: 15,
+    paddingBottom: 5,
+  },
+  soundCloseButton: {
+    padding: 5,
+    borderRadius: 20,
+    backgroundColor: 'rgba(122, 44, 52, 0.1)',
+  },
+  soundOptionsContainer: {
+    padding: 20,
+    paddingTop: 10,
+  },
+  soundOptionButton: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    marginBottom: 12,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    shadowColor: 'rgba(0,0,0,0.05)',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  soundOptionSelected: {
+    backgroundColor: '#F8F1F1',
+    borderColor: '#7A2C34',
+  },
+  soundOptionDisabled: {
+    opacity: 0.6,
+  },
+  soundOptionContent: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  soundIconContainer: {
+    backgroundColor: 'rgba(122, 44, 52, 0.1)',
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  soundIconContainerSelected: {
+    backgroundColor: '#7A2C34',
+  },
+  soundOptionText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1E293B',
+    flex: 1,
+  },
+  soundOptionTextSelected: {
+    color: '#7A2C34',
+  },
+  checkmarkContainer: {
+    backgroundColor: 'rgba(122, 44, 52, 0.1)',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  soundModalFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    padding: 20,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  modalButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    minWidth: 120,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  cancelButton: {
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  confirmButton: {
+    backgroundColor: '#7A2C34',
+  },
+  cancelButtonText: {
+    color: '#64748B',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  confirmButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  disabledButton: {
+    opacity: 0.5,
+  },
+  playingIndicator: {
+    marginLeft: 10,
+  },
 });
 
 // End of component
