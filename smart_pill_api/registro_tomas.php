@@ -52,6 +52,7 @@ function registrarToma($conn) {
     $horario_id = intval($data->horario_id ?? 0);
     $estado = $conn->real_escape_string($data->estado ?? 'pendiente');
     $observaciones = $conn->real_escape_string($data->observaciones ?? '');
+    $dosis_programada = $conn->real_escape_string($data->dosis_programada ?? '');
     
     if ($usuario_id <= 0 || $horario_id <= 0) {
         throw new Exception("Usuario ID y Horario ID son requeridos");
@@ -103,7 +104,7 @@ function registrarToma($conn) {
                       ) VALUES (
                         $usuario_id, $horario_id, {$horario['remedio_global_id']}, {$horario['programacion_id']},
                         '$fecha_hoy', '{$horario['hora']}', $fecha_hora_accion_sql, '$estado',
-                        '{$horario['dosis_por_toma']}', '$observaciones', 0
+                        '" . (!empty($dosis_programada) ? $dosis_programada : $horario['dosis_por_toma']) . "', '$observaciones', 0
                       )";
         
         if (!$conn->query($sql_insert)) {
@@ -162,7 +163,7 @@ function obtenerRegistros($conn) {
             FROM registro_tomas rt
             JOIN horarios_tratamiento ht ON rt.horario_id = ht.horario_id
             JOIN programacion_tratamientos pt ON rt.programacion_id = pt.programacion_id
-            JOIN remedios_globales rg ON rt.remedio_global_id = rg.remedio_global_id
+            JOIN remedio_global rg ON rt.remedio_global_id = rg.remedio_global_id
             LEFT JOIN registro_tomas ro ON rt.registro_original_id = ro.registro_id
             WHERE rt.usuario_id = $usuario_id 
             AND rt.fecha_programada BETWEEN '$fecha_desde' AND '$fecha_hasta'

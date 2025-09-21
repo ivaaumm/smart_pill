@@ -61,8 +61,12 @@ try {
         $programaciones[] = $row;
     }
     
-    // Devolver el array directamente como el frontend lo espera
-    echo json_encode($programaciones);
+    // Devolver en formato consistente con otros endpoints
+    echo json_encode([
+        "success" => true,
+        "data" => $programaciones,
+        "count" => count($programaciones)
+    ]);
     
 } catch (Exception $e) {
     http_response_code(500);

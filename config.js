@@ -84,6 +84,55 @@ export const getApiUrl = () => {
   return apiUrl.endsWith('/') ? apiUrl : `${apiUrl}/`;
 };
 
+// URLs de fallback para probar en caso de error
+const FALLBACK_URLS = [
+  'http://192.168.1.87/smart_pill/',
+  'http://10.0.2.2/smart_pill/',
+  'http://localhost/smart_pill/'
+];
+
+// Función para probar conectividad con diferentes URLs
+export const testConnectivity = async () => {
+  for (const baseUrl of FALLBACK_URLS) {
+    try {
+      const testUrl = `${baseUrl}smart_pill_api/obtener_programaciones.php?usuario_id=1`;
+      
+      // Crear una promesa con timeout manual para React Native
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Timeout')), 5000)
+      );
+      
+      const fetchPromise = fetch(testUrl, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        }
+      });
+      
+      const response = await Promise.race([fetchPromise, timeoutPromise]);
+      
+      if (response.ok) {
+        console.log(`✅ Conexión exitosa con: ${baseUrl}`);
+        return {
+          success: true,
+          workingUrl: baseUrl,
+          message: `Conexión establecida con ${baseUrl}`
+        };
+      }
+    } catch (error) {
+      console.log(`❌ Falló conexión con: ${baseUrl} - Error: ${error.message}`);
+    }
+  }
+  
+  console.log('❌ No se pudo establecer conexión con ninguna URL');
+  return {
+    success: false,
+    workingUrl: null,
+    message: 'No se pudo establecer conexión con el servidor'
+  };
+};
+
 // Función helper para hacer peticiones HTTP
 export const apiRequest = async (endpoint, options = {}) => {
   const url = buildApiUrl(endpoint);
@@ -162,7 +211,7 @@ export const apiRequest = async (endpoint, options = {}) => {
     // Intentar obtener el contenido de la respuesta para depuración
     const responseText = await response.text();
     
-    if (contentType.includes("application/json") && responseText) {
+    if (contentType && contentType.includes("application/json") && responseText) {
       try {
         data = JSON.parse(responseText);
         console.log("📄 Datos JSON recibidos:", data);

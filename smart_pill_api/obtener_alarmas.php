@@ -31,12 +31,14 @@ try {
             ph.hora as horario_programado
         FROM alarmas a
         LEFT JOIN programacion_horarios ph ON a.horario_id = ph.horario_id
-        WHERE a.programacion_id = :programacion_id
+        WHERE a.programacion_id = ?
         ORDER BY a.hora
     ");
     
-    $stmt->execute([':programacion_id' => $programacion_id]);
-    $alarmas = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $stmt->bind_param('i', $programacion_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $alarmas = $result->fetch_all(MYSQLI_ASSOC);
     
     // Formatear los días de la semana para el frontend
     $alarmas_formateadas = array_map(function($alarma) {
@@ -61,7 +63,7 @@ try {
         'count' => count($alarmas_formateadas)
     ]);
     
-} catch (PDOException $e) {
+} catch (mysqli_sql_exception $e) {
     http_response_code(500);
     echo json_encode([
         'success' => false,

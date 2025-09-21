@@ -46,7 +46,8 @@ const AlarmComponent = ({ programacionId, onAlarmsChange, initialAlarms = [] }) 
           time: new Date(`2000-01-01T${alarma.hora}`),
           enabled: alarma.activa,
           days: Array(7).fill(0).map((_, i) => 
-            alarma.dias.includes(String(i + 1)) ? 1 : 0
+            (alarma.dias && alarma.dias.includes) ? 
+              (alarma.dias.includes(String(i + 1)) ? 1 : 0) : 0
           ),
           sound: alarma.sonido,
           vibrate: alarma.vibrar,

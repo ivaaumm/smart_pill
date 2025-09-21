@@ -10,21 +10,28 @@ import {
   Alert,
   BackHandler,
   AppState,
+  Modal,
+  ScrollView,
 } from 'react-native';
 import { MaterialIcons, Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { playSoundPreview, stopCurrentSound } from '../utils/audioUtils';
+import { registrarToma, actualizarEstadoToma, formatearDatosParaRegistro, manejarErrorAPI, obtenerRegistroId } from '../utils/medicationLogAPI';
+import { scheduleSnoozeNotification } from '../utils/audioUtils';
+import { useUser } from '../UserContextProvider';
 // Notificaciones removidas - solo pantalla directa
 
 const { width, height } = Dimensions.get('window');
 
 const FullScreenAlarm = ({ route, navigation }) => {
   const { notificationData } = route.params || {};
+  const { user } = useUser();
   const [pulseAnim] = useState(new Animated.Value(1));
   const [glowAnim] = useState(new Animated.Value(0));
   const [isPlaying, setIsPlaying] = useState(true);
   const [timeLeft, setTimeLeft] = useState(300); // 5 minutos en segundos
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [showMedicationDetails, setShowMedicationDetails] = useState(false);
 
   useEffect(() => {
     // Forzar que la app esté en primer plano
@@ -122,21 +129,104 @@ const FullScreenAlarm = ({ route, navigation }) => {
     ).start();
   };
 
-  const handleTaken = async () => {
+  // Nueva función para obtener registro_id cuando no esté disponible
+  const obtenerRegistroId = async (programacionId, usuarioId) => {
+    try {
+      console.log('🔍 Obteniendo registro_id para programacion_id:', programacionId, 'usuario_id:', usuarioId);
+      
+      const response = await fetch('http://localhost/smart_pill/obtener_registro_pendiente.php', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          programacion_id: programacionId,
+          usuario_id: usuarioId
+        })
+      });
+
+      const data = await response.json();
+      
+      if (data.success && data.registro_id) {
+        console.log('✅ registro_id obtenido exitosamente:', data.registro_id);
+        return data.registro_id;
+      } else {
+        console.error('❌ No se pudo obtener registro_id:', data.message);
+        throw new Error(data.message || 'No se encontró registro pendiente');
+      }
+    } catch (error) {
+      console.error('❌ Error al obtener registro_id:', error);
+      throw error;
+    }
+  };
+
+  // Función auxiliar para manejar acciones de alarma con registro_id
+  const handleAlarmAction = async (action, observaciones) => {
     try {
       await stopCurrentSound();
       setIsPlaying(false);
       
-      // Las notificaciones recurrentes ahora se programan individualmente por día
-      // No necesitamos reprogramar aquí ya que cada día tiene su propia notificación
-      console.log('✅ Medicamento marcado como tomado. Las notificaciones futuras ya están programadas individualmente.');
+      // Debug: Verificar qué datos tenemos
+      console.log('🔍 DEBUG - notificationData completo:', JSON.stringify(notificationData, null, 2));
+      console.log('🔍 DEBUG - registro_id disponible:', notificationData?.registro_id);
       
-      // Aquí puedes agregar lógica para marcar como tomado en la base de datos
-      // await marcarComoTomado(notificationData.programacionId);
+      let registroId = notificationData?.registro_id;
+      
+      // Si no tenemos registro_id, intentar obtenerlo usando programacionId
+      if (!registroId && notificationData?.programacionId && notificationData?.usuario_id) {
+        console.log('🔄 registro_id no disponible, obteniendo desde el servidor...');
+        try {
+          registroId = await obtenerRegistroId(notificationData.programacionId, notificationData.usuario_id);
+          console.log('✅ registro_id obtenido:', registroId);
+        } catch (error) {
+          console.error('❌ Error al obtener registro_id:', error);
+          Alert.alert(
+            'Error', 
+            `No se puede ${action} el medicamento: ${error.message}. Por favor, registra manualmente desde la pantalla principal.`,
+            [{ text: 'OK', onPress: () => navigation.goBack() }]
+          );
+          return;
+        }
+      }
+      
+      if (!registroId) {
+        console.error('❌ ERROR: No se encontró registro_id después de todos los intentos');
+        Alert.alert(
+          'Error', 
+          'No se puede actualizar el registro: falta información necesaria. Por favor, registra manualmente desde la pantalla principal.',
+          [{ text: 'OK', onPress: () => navigation.goBack() }]
+        );
+        return;
+      }
+      
+      // Actualizar el estado del registro
+      const updateData = {
+        registro_id: registroId,
+        nuevo_estado: action,
+        observaciones: observaciones
+      };
+      
+      console.log(`📝 Actualizando estado de ${action} en la base de datos:`, updateData);
+      
+      const resultado = await actualizarEstadoToma(updateData);
+      
+      console.log(`✅ ${action} registrado exitosamente:`, resultado);
+      
+      return resultado;
+    } catch (error) {
+      console.error(`Error al registrar ${action}:`, error);
+      const mensajeError = manejarErrorAPI(error);
+      throw new Error(mensajeError);
+    }
+  };
+
+  const handleTaken = async () => {
+    try {
+      await handleAlarmAction('tomada', 'Medicamento tomado desde la pantalla de alarma');
       
       Alert.alert(
         '✅ Medicamento tomado',
-        '¡Excelente! Has marcado tu medicamento como tomado.',
+        '¡Excelente! Has marcado tu medicamento como tomado y se ha registrado correctamente.',
         [
           {
             text: 'OK',
@@ -145,26 +235,44 @@ const FullScreenAlarm = ({ route, navigation }) => {
         ]
       );
     } catch (error) {
-      console.error('Error al marcar como tomado:', error);
-      Alert.alert('Error', 'No se pudo registrar la toma del medicamento');
+      Alert.alert('Error', `No se pudo registrar la toma del medicamento: ${error.message}`);
     }
   };
 
   const handleSnooze = async () => {
-    await stopCurrentSound();
-    setIsPlaying(false);
-    
-    // Sin notificaciones - solo cerrar pantalla
-    Alert.alert(
-      '⏰ Recordatorio pospuesto',
-      'Alarma pospuesta. La pantalla se cerrará.',
-      [
-        {
-          text: 'OK',
-          onPress: () => navigation.goBack(),
-        },
-      ]
-    );
+    try {
+      await handleAlarmAction('pospuesta', 'Medicamento pospuesto desde la pantalla de alarma');
+      
+      // Programar nueva notificación para 10 minutos después
+      try {
+        await scheduleSnoozeNotification(notificationData);
+        console.log('✅ Nueva alarma programada para 10 minutos después');
+      } catch (snoozeError) {
+        console.error('❌ Error al programar alarma pospuesta:', snoozeError);
+      }
+      
+      Alert.alert(
+        '⏰ Recordatorio pospuesto',
+        'Alarma pospuesta y registrada correctamente. Una nueva alarma sonará en 10 minutos.',
+        [
+          {
+            text: 'OK',
+            onPress: () => navigation.goBack(),
+          },
+        ]
+      );
+    } catch (error) {
+      Alert.alert(
+        '⏰ Recordatorio pospuesto',
+        `Alarma pospuesta pero no se pudo registrar: ${error.message}. La pantalla se cerrará.`,
+        [
+          {
+            text: 'OK',
+            onPress: () => navigation.goBack(),
+          },
+        ]
+      );
+    }
   };
 
   const handleSkip = async () => {
@@ -182,9 +290,22 @@ const FullScreenAlarm = ({ route, navigation }) => {
         {
           text: 'Omitir',
           style: 'destructive',
-          onPress: () => {
-            // Aquí puedes agregar lógica para marcar como omitido
-            navigation.goBack();
+          onPress: async () => {
+            try {
+              await handleAlarmAction('rechazada', 'Medicamento omitido desde la pantalla de alarma');
+              navigation.goBack();
+            } catch (error) {
+              Alert.alert(
+                'Error',
+                `Medicamento omitido pero no se pudo registrar: ${error.message}`,
+                [
+                  {
+                    text: 'OK',
+                    onPress: () => navigation.goBack(),
+                  },
+                ]
+              );
+            }
           },
         },
       ]
@@ -205,18 +326,23 @@ const FullScreenAlarm = ({ route, navigation }) => {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const glowOpacity = glowAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.3, 0.8],
-  });
+  const handleLongPressMedication = () => {
+    setShowMedicationDetails(true);
+  };
+
+  const closeMedicationDetails = () => {
+    setShowMedicationDetails(false);
+  };
+
+
 
   return (
     <LinearGradient
-      colors={['#667eea', '#764ba2', '#f093fb', '#ff6b6b']}
+      colors={['#7A2C34', '#A67C8E', '#BFA5A9']}
       style={styles.container}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
-      locations={[0, 0.3, 0.7, 1]}
+      locations={[0, 0.5, 1]}
     >
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent={true} />
       
@@ -241,73 +367,151 @@ const FullScreenAlarm = ({ route, navigation }) => {
             },
           ]}
         >
-          <Animated.View style={[styles.glowEffect, { opacity: glowOpacity }]} />
           <View style={styles.pillIconContainer}>
-            <Ionicons name="medical" size={100} color="#FFFFFF" />
+            <Ionicons name="medical" size={50} color="#7A2C34" />
           </View>
         </Animated.View>
       </View>
 
       {/* Información del medicamento */}
       <View style={styles.medicationInfo}>
-        <View style={styles.medicationCard}>
-          <Text style={styles.title}>💊 Hora de tu medicamento</Text>
+        <TouchableOpacity 
+          style={styles.medicationCard}
+          onLongPress={handleLongPressMedication}
+          delayLongPress={800}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.title}>Hora de tu medicamento</Text>
           <Text style={styles.medicationName}>
             {notificationData?.medicamento || 'Medicamento'}
           </Text>
           <View style={styles.infoRow}>
-            <Ionicons name="medical-outline" size={18} color="rgba(255,255,255,0.9)" />
+            <Ionicons name="medical-outline" size={18} color="#7A2C34" />
             <Text style={styles.dosage}>
               {notificationData?.dosis || '1 tableta'}
             </Text>
           </View>
           <View style={styles.infoRow}>
-            <Ionicons name="time-outline" size={18} color="rgba(255,255,255,0.9)" />
+            <Ionicons name="time-outline" size={18} color="#7A2C34" />
             <Text style={styles.time}>
               {notificationData?.hora || formatTime(currentTime)}
             </Text>
           </View>
-        </View>
+          <Text style={styles.longPressHint}>Mantén presionado para más información</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Botones de acción */}
       <View style={styles.buttonsContainer}>
         <TouchableOpacity style={styles.takenButton} onPress={handleTaken}>
           <LinearGradient
-            colors={['#4CAF50', '#45a049']}
+            colors={['#7A2C34', '#A67C8E']}
             style={styles.buttonGradient}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
           >
-            <Ionicons name="checkmark-circle" size={28} color="#FFFFFF" />
+            <Ionicons name="checkmark-circle" size={24} color="#FFFFFF" />
             <Text style={styles.buttonText}>YA LO TOMÉ</Text>
           </LinearGradient>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.snoozeButton} onPress={handleSnooze}>
           <LinearGradient
-            colors={['#FF9800', '#f57c00']}
+            colors={['#BFA5A9', '#E0C3C9']}
             style={styles.buttonGradient}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
           >
-            <Ionicons name="alarm-outline" size={28} color="#FFFFFF" />
-            <Text style={styles.buttonText}>POSPONER 10 MIN</Text>
+            <Ionicons name="alarm-outline" size={24} color="#7A2C34" />
+            <Text style={[styles.buttonText, {color: '#7A2C34'}]}>POSPONER 10 MIN</Text>
           </LinearGradient>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.skipButton} onPress={handleSkip}>
           <LinearGradient
-            colors={['#f44336', '#d32f2f']}
+            colors={['#F5F5F5', '#E0C3C9']}
             style={styles.buttonGradient}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
           >
-            <Ionicons name="close-circle" size={28} color="#FFFFFF" />
-            <Text style={styles.buttonText}>OMITIR</Text>
+            <Ionicons name="close-circle" size={24} color="#7A2C34" />
+            <Text style={[styles.buttonText, {color: '#7A2C34'}]}>OMITIR</Text>
           </LinearGradient>
         </TouchableOpacity>
       </View>
+
+      {/* Modal de información detallada */}
+      <Modal
+        visible={showMedicationDetails}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={closeMedicationDetails}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Información del Medicamento</Text>
+                <TouchableOpacity 
+                  onPress={closeMedicationDetails}
+                  style={styles.closeButton}
+                >
+                  <Ionicons name="close" size={24} color="#7A2C34" />
+                </TouchableOpacity>
+              </View>
+              
+              <View style={styles.detailSection}>
+                <Text style={styles.detailLabel}>Medicamento:</Text>
+                <Text style={styles.detailValue}>
+                  {notificationData?.medicamento || 'No especificado'}
+                </Text>
+              </View>
+              
+              <View style={styles.detailSection}>
+                <Text style={styles.detailLabel}>Dosis:</Text>
+                <Text style={styles.detailValue}>
+                  {notificationData?.dosis || 'No especificado'}
+                </Text>
+              </View>
+              
+              <View style={styles.detailSection}>
+                <Text style={styles.detailLabel}>Hora programada:</Text>
+                <Text style={styles.detailValue}>
+                  {notificationData?.hora || formatTime(currentTime)}
+                </Text>
+              </View>
+              
+              <View style={styles.detailSection}>
+                <Text style={styles.detailLabel}>Frecuencia:</Text>
+                <Text style={styles.detailValue}>
+                  {notificationData?.frecuencia || 'No especificado'}
+                </Text>
+              </View>
+              
+              <View style={styles.detailSection}>
+                <Text style={styles.detailLabel}>Duración del tratamiento:</Text>
+                <Text style={styles.detailValue}>
+                  {notificationData?.duracion || 'No especificado'}
+                </Text>
+              </View>
+              
+              <View style={styles.detailSection}>
+                <Text style={styles.detailLabel}>Instrucciones:</Text>
+                <Text style={styles.detailValue}>
+                  {notificationData?.instrucciones || 'Tomar según indicación médica'}
+                </Text>
+              </View>
+              
+              <View style={styles.detailSection}>
+                <Text style={styles.detailLabel}>Notas adicionales:</Text>
+                <Text style={styles.detailValue}>
+                  {notificationData?.notas || 'Ninguna'}
+                </Text>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </LinearGradient>
   );
 };
@@ -317,24 +521,24 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 40,
-    paddingTop: StatusBar.currentHeight + 30,
+    paddingVertical: 20,
+    paddingTop: StatusBar.currentHeight + 20,
   },
   header: {
     alignItems: 'center',
-    marginTop: 10,
+    marginTop: 5,
     width: '100%',
     paddingHorizontal: 20,
   },
   timeText: {
-    fontSize: 72,
+    fontSize: 56,
     fontWeight: '200',
     color: '#FFFFFF',
-    marginBottom: 20,
+    marginBottom: 15,
     textShadowColor: 'rgba(0, 0, 0, 0.4)',
     textShadowOffset: { width: 0, height: 3 },
     textShadowRadius: 12,
-    letterSpacing: 3,
+    letterSpacing: 2,
     fontFamily: 'System',
   },
   timerContainer: {
@@ -360,131 +564,185 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   alarmContainer: {
-    flex: 1,
+    flex: 0.6,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 20,
+    paddingVertical: 10,
   },
   alarmIconContainer: {
-    width: 280,
-    height: 280,
-    borderRadius: 140,
+    width: 150,
+    height: 150,
+    borderRadius: 75,
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
   },
-  glowEffect: {
-    position: 'absolute',
-    width: 320,
-    height: 320,
-    borderRadius: 160,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
-    top: -20,
-    left: -20,
-    shadowColor: '#FFFFFF',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.6,
-    shadowRadius: 30,
-    elevation: 15,
-  },
+
   pillIconContainer: {
-    width: 200,
-    height: 200,
-    borderRadius: 100,
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 4,
-    borderColor: 'rgba(255, 255, 255, 0.5)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.4,
-    shadowRadius: 20,
-    elevation: 18,
+    borderWidth: 2,
+    borderColor: '#7A2C34',
+    shadowColor: '#7A2C34',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 6,
   },
   medicationInfo: {
     alignItems: 'center',
-    paddingHorizontal: 24,
-    marginBottom: 35,
+    paddingHorizontal: 20,
+    marginBottom: 15,
     width: '100%',
   },
   medicationCard: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: 28,
-    paddingVertical: 30,
-    paddingHorizontal: 32,
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    borderRadius: 20,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
     alignItems: 'center',
     backdropFilter: 'blur(15px)',
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.25,
-    shadowRadius: 20,
-    elevation: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(122, 44, 52, 0.2)',
+    shadowColor: '#7A2C34',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 6,
     width: '100%',
-    maxWidth: 350,
+    maxWidth: 320,
   },
   title: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#7A2C34',
     textAlign: 'center',
-    marginBottom: 18,
-    textShadowColor: 'rgba(0, 0, 0, 0.4)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 6,
-    letterSpacing: 0.5,
+    marginBottom: 12,
+    letterSpacing: 0.3,
   },
   medicationName: {
-    fontSize: 32,
-    fontWeight: '800',
-    color: '#FFFFFF',
+    fontSize: 26,
+    fontWeight: '700',
+    color: '#7A2C34',
     textAlign: 'center',
-    marginBottom: 24,
-    textShadowColor: 'rgba(0, 0, 0, 0.4)',
-    textShadowOffset: { width: 0, height: 3 },
-    textShadowRadius: 8,
-    letterSpacing: 1,
-    lineHeight: 38,
+    marginBottom: 16,
+    letterSpacing: 0.5,
+    lineHeight: 30,
   },
   infoRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
-    gap: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 20,
-    minWidth: 200,
+    marginBottom: 8,
+    gap: 8,
+    backgroundColor: 'rgba(122, 44, 52, 0.08)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 15,
+    minWidth: 180,
     justifyContent: 'center',
+    borderWidth: 0.5,
+    borderColor: 'rgba(122, 44, 52, 0.15)',
   },
   dosage: {
-    fontSize: 19,
-    color: 'rgba(255, 255, 255, 0.98)',
-    fontWeight: '600',
-    letterSpacing: 0.3,
+    fontSize: 16,
+    color: '#7A2C34',
+    fontWeight: '500',
+    letterSpacing: 0.2,
   },
   time: {
-    fontSize: 19,
-    color: 'rgba(255, 255, 255, 0.98)',
+    fontSize: 16,
+    color: '#7A2C34',
+    fontWeight: '500',
+    letterSpacing: 0.2,
+  },
+  longPressHint: {
+    fontSize: 12,
+    color: 'rgba(122, 44, 52, 0.7)',
+    fontStyle: 'italic',
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    paddingVertical: 25,
+    paddingHorizontal: 25,
+    maxHeight: '80%',
+    width: '100%',
+    maxWidth: 400,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    elevation: 15,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+    paddingBottom: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(122, 44, 52, 0.2)',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#7A2C34',
+    flex: 1,
+  },
+  closeButton: {
+    padding: 5,
+    borderRadius: 15,
+    backgroundColor: 'rgba(122, 44, 52, 0.1)',
+  },
+  detailSection: {
+    marginBottom: 15,
+    paddingVertical: 10,
+    paddingHorizontal: 15,
+    backgroundColor: 'rgba(122, 44, 52, 0.05)',
+    borderRadius: 12,
+    borderLeftWidth: 3,
+    borderLeftColor: '#7A2C34',
+  },
+  detailLabel: {
+    fontSize: 14,
     fontWeight: '600',
-    letterSpacing: 0.3,
+    color: '#7A2C34',
+    marginBottom: 5,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  detailValue: {
+    fontSize: 16,
+    color: '#333333',
+    fontWeight: '400',
+    lineHeight: 22,
   },
   buttonsContainer: {
     width: '100%',
-    paddingHorizontal: 28,
-    gap: 18,
-    paddingBottom: 10,
+    paddingHorizontal: 20,
+    gap: 10,
+    paddingBottom: 15,
   },
   takenButton: {
     borderRadius: 25,
     overflow: 'hidden',
     elevation: 16,
-    shadowColor: '#4CAF50',
+    shadowColor: '#7A2C34',
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.5,
+    shadowOpacity: 0.4,
     shadowRadius: 16,
     transform: [{ scale: 1.02 }],
   },
@@ -492,38 +750,40 @@ const styles = StyleSheet.create({
     borderRadius: 25,
     overflow: 'hidden',
     elevation: 14,
-    shadowColor: '#FF9800',
+    shadowColor: '#BFA5A9',
     shadowOffset: { width: 0, height: 7 },
-    shadowOpacity: 0.45,
+    shadowOpacity: 0.3,
     shadowRadius: 14,
   },
   skipButton: {
     borderRadius: 25,
     overflow: 'hidden',
     elevation: 14,
-    shadowColor: '#f44336',
+    shadowColor: '#E0C3C9',
     shadowOffset: { width: 0, height: 7 },
-    shadowOpacity: 0.45,
+    shadowOpacity: 0.3,
     shadowRadius: 14,
   },
   buttonGradient: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 22,
-    paddingHorizontal: 28,
-    gap: 14,
-    minHeight: 65,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    gap: 8,
+    minHeight: 50,
   },
   buttonText: {
     color: '#FFFFFF',
-    fontSize: 19,
-    fontWeight: '800',
-    textShadowColor: 'rgba(0, 0, 0, 0.4)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 4,
-    letterSpacing: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    textShadowColor: 'rgba(0, 0, 0, 0.3)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+    letterSpacing: 0.3,
     textTransform: 'uppercase',
+    textAlign: 'center',
+    flex: 1,
   },
 });
 

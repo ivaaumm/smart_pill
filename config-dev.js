@@ -7,7 +7,7 @@ export const DEV_CONFIG = {
   LOCALHOST: "http://localhost/smart_pill/",
 
   // Opción 2: IP específica (para dispositivo físico en la misma red)
-  IP_SPECIFIC: "http://192.168.0.125/smart_pill/",
+  IP_SPECIFIC: "http://192.168.1.87/smart_pill/",
 
   // Opción 3: Para emulador Android (10.0.2.2 apunta a localhost del host)
   ANDROID_EMULATOR: "http://10.0.2.2/smart_pill/",
@@ -18,13 +18,22 @@ export const DEV_CONFIG = {
 
 // Función para obtener la URL correcta según el entorno
 export const getDevelopmentUrl = () => {
-  // Cambia esta línea según tu entorno de desarrollo
-  return DEV_CONFIG.IP_SPECIFIC; // Cambia a la opción que necesites
-
-  // Ejemplos de uso:
-  // return DEV_CONFIG.LOCALHOST; // Para desarrollo local
-  // return DEV_CONFIG.ANDROID_EMULATOR; // Para emulador Android
-  // return DEV_CONFIG.IOS_EMULATOR; // Para emulador iOS
+  // Detectar automáticamente el entorno
+  const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent || '' : '';
+  const isAndroidEmulator = userAgent && userAgent.includes('Android') && userAgent.includes('sdk');
+  
+  // Si es emulador Android, usar la IP especial
+  if (isAndroidEmulator) {
+    console.log('🤖 Detectado emulador Android, usando 10.0.2.2');
+    return DEV_CONFIG.ANDROID_EMULATOR;
+  }
+  
+  // Para dispositivos físicos y desarrollo, usar IP específica
+  console.log('📱 Usando IP específica para dispositivos físicos: 192.168.1.87');
+  return DEV_CONFIG.IP_SPECIFIC;
+  
+  // Si necesitas usar localhost para desarrollo local, descomenta:
+  // return DEV_CONFIG.LOCALHOST;
 };
 
 // Instrucciones de uso:

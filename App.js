@@ -8,6 +8,7 @@ import * as Device from 'expo-device';
 import { Platform } from 'react-native';
 import { setAudioModeAsync } from 'expo-audio';
 import Navigation from "./navigation";
+import { useUser } from "./UserContextProvider";
 // import { setupNotificationsForExpoGo } from "./utils/notificationConfig"; // Removido - sin notificaciones
 
 import Home from "./screens/home";
@@ -25,7 +26,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { MaterialIcons } from "@expo/vector-icons";
 import { scheduleNotification } from './utils/audioUtils';
 import { UserProvider } from "./UserContextProvider";
-import { getApiUrl } from './config';
+import { getApiUrl, testConnectivity } from './config';
 
 // La configuración de notificaciones se maneja en notificationConfig.js
 
@@ -34,15 +35,30 @@ import { getApiUrl } from './config';
 // Las alarmas se muestran directamente en pantalla
 
 // Función para verificar alarmas activas
-async function verificarAlarmasActivas(navigationRef) {
+async function verificarAlarmasActivas(navigationRef, usuario_id) {
   try {
-    const apiUrl = getApiUrl();
+    // Si no hay usuario logueado, no verificar alarmas
+    if (!usuario_id) {
+      console.log('⚠️ No hay usuario logueado, saltando verificación de alarmas');
+      return;
+    }
+
+    // Probar conectividad antes de hacer las peticiones
+    const connectivityResult = await testConnectivity();
+    if (!connectivityResult.success) {
+      console.error('❌ No se pudo establecer conexión con el servidor');
+      return;
+    }
+    
+    const apiUrl = connectivityResult.workingUrl + 'smart_pill_api/';
     const ahora = new Date();
     const horaActual = ahora.toTimeString().slice(0, 5); // HH:MM
     const diaActual = ahora.getDay(); // 0=domingo, 1=lunes, etc.
     
+    console.log(`🕐 Verificando alarmas - Hora actual: ${horaActual}, Día: ${diaActual}, Usuario: ${usuario_id}`);
+    
     // Obtener todas las programaciones activas
-    const response = await fetch(`${apiUrl}programaciones_usuario.php?usuario_id=1`);
+    const response = await fetch(`${apiUrl}programaciones_usuario.php?usuario_id=${usuario_id}`);
     const data = await response.json();
     
     if (data.success && data.data) {
@@ -54,18 +70,33 @@ async function verificarAlarmasActivas(navigationRef) {
           
           if (alarmasData.success && alarmasData.data) {
              for (const alarma of alarmasData.data) {
+               // Convertir hora de alarma de HH:MM:SS a HH:MM para comparar
+               const horaAlarma = alarma.hora ? alarma.hora.slice(0, 5) : '';
+               
                // Verificar si la alarma está activa y coincide con la hora actual
-               if (alarma.activa && alarma.hora === horaActual) {
-                 // Verificar si el día actual está en los días programados
-                 const diasProgramados = alarma.dias || [];
-                 // Convertir domingo de 0 a 7 para coincidir con la base de datos
-                 const diaParaComparar = diaActual === 0 ? 7 : diaActual;
-                 const diaCoincide = diasProgramados.includes(diaParaComparar);
+               if (alarma.activa && horaAlarma === horaActual) {
+                 // Procesar días programados - puede ser string "1,2,3" o array
+                let diasProgramados = [];
+                if (typeof alarma.dias_semana === 'string') {
+                  diasProgramados = alarma.dias_semana.split(',').map(d => parseInt(d.trim()));
+                } else if (Array.isArray(alarma.dias_semana)) {
+                  diasProgramados = alarma.dias_semana;
+                } else if (alarma.dias) {
+                  diasProgramados = Array.isArray(alarma.dias) ? alarma.dias : alarma.dias.split(',').map(d => parseInt(d.trim()));
+                }
+                
+                // Usar el día actual directamente (formato JavaScript estándar 0-6)
+                // Verificar que diasProgramados sea un array antes de usar .includes()
+                const diaCoincide = Array.isArray(diasProgramados) && diasProgramados.includes(diaActual);
                  
-                 console.log(`⏰ Verificando alarma: ${programacion.nombre_tratamiento} - Hora: ${alarma.hora} vs ${horaActual}, Día: ${diaParaComparar} en [${diasProgramados.join(',')}], Activa: ${alarma.activa}`);
+                 console.log(`⏰ Verificando alarma: ${programacion.nombre_tratamiento}`);
+                 console.log(`   - Hora alarma: ${alarma.hora} -> ${horaAlarma} vs actual: ${horaActual}`);
+                 console.log(`   - Días programados: ${alarma.dias_semana} -> [${diasProgramados.join(',')}]`);
+                 console.log(`   - Día actual: ${diaActual}, Coincide: ${diaCoincide}`);
+                 console.log(`   - Activa: ${alarma.activa}`);
                  
                  if (diaCoincide) {
-                   console.log(`🚨 ALARMA ACTIVADA: ${programacion.nombre_tratamiento} a las ${horaActual} el día ${diaParaComparar}`);
+                   console.log(`🚨 ALARMA ACTIVADA: ${programacion.nombre_tratamiento} a las ${horaActual} el día ${diaActual}`);
                    
                    // Navegar a la pantalla de alarma
                    if (navigationRef.current) {
@@ -75,7 +106,9 @@ async function verificarAlarmasActivas(navigationRef) {
                          hora: horaActual,
                          dosis: '1 pastilla',
                          programacionId: programacion.programacion_id,
-                         alarmaId: alarma.id,
+                         alarmaId: alarma.alarma_id || alarma.id,
+                         horario_id: alarma.horario_id,
+                         usuario_id: usuario_id,
                          sound: alarma.sonido || 'alarm'
                        }
                      });
@@ -223,6 +256,15 @@ function MainStack() {
 // para evitar notificaciones infinitas
 
 export default function App() {
+  return (
+    <UserProvider>
+      <AppContent />
+    </UserProvider>
+  );
+}
+
+function AppContent() {
+  const { user } = useUser();
   const notificationListener = useRef();
   const responseListener = useRef();
   const navigationRef = useRef();
@@ -239,11 +281,11 @@ export default function App() {
     console.log('⏰ Iniciando sistema de verificación de alarmas cada minuto');
     
     // Verificar inmediatamente al iniciar
-    verificarAlarmasActivas(navigationRef);
+    verificarAlarmasActivas(navigationRef, user?.usuario_id);
     
     // Configurar verificación cada minuto
     alarmCheckInterval.current = setInterval(() => {
-      verificarAlarmasActivas(navigationRef);
+      verificarAlarmasActivas(navigationRef, user?.usuario_id);
     }, 60000); // 60 segundos
 
     // Sin listener de respuesta de notificaciones - sistema de pantalla directa
@@ -261,78 +303,61 @@ export default function App() {
         clearInterval(alarmCheckInterval.current);
       }
     };
-  }, []);
+  }, [user?.usuario_id]); // Dependencia del usuario para reiniciar verificación cuando cambie
 
   return (
-    <UserProvider>
-      <SafeAreaProvider>
-        <NavigationContainer ref={navigationRef}>
-          <Drawer.Navigator
-            initialRouteName="MainStack"
-            screenOptions={{
-              drawerActiveTintColor: "#7A2C34",
-              drawerLabelStyle: { fontSize: 18 },
+    <SafeAreaProvider>
+      <NavigationContainer ref={navigationRef}>
+        <Drawer.Navigator
+          initialRouteName="MainStack"
+          screenOptions={{
+            drawerActiveTintColor: "#7A2C34",
+            drawerLabelStyle: { fontSize: 18 },
+          }}
+        >
+          <Drawer.Screen
+            name="MainStack"
+            component={MainStack}
+            options={{
+              title: "Inicio",
+              drawerIcon: ({ color, size }) => (
+                <MaterialIcons
+                  name="favorite"
+                  size={size}
+                  color={color}
+                />
+              ),
+              headerShown: false,
             }}
-          >
-            <Drawer.Screen
-              name="MainStack"
-              component={MainStack}
-              options={{
-                title: "Inicio",
-                drawerIcon: ({ color, size }) => (
-                  <MaterialIcons
-                    name="favorite"
-                    size={size}
-                    color={color}
-                  />
-                ),
-                headerShown: false,
-              }}
-            />
-            <Drawer.Screen
-              name="Perfil"
-              component={Perfil}
-              options={{
-                title: "Perfil",
-                drawerIcon: ({ color, size }) => (
-                  <MaterialIcons
-                    name="person-outline"
-                    size={size}
-                    color={color}
-                  />
-                ),
-                headerShown: false,
-              }}
-            />
-            <Drawer.Screen
-              name="Bluetooth"
-              component={Bluetooth}
-              options={{
-                title: "Bluetooth",
-                drawerIcon: ({ color, size }) => (
-                  <MaterialIcons name="bluetooth" size={size} color={color} />
-                ),
-                headerShown: false,
-              }}
-            />
-            <Drawer.Screen
-              name="SoundTest"
-              component={SoundTest}
-              options={{
-                title: "Probar Sonidos",
-                drawerIcon: ({ color, size }) => (
-                  <MaterialIcons name="volume-up" size={size} color={color} />
-                ),
-                headerShown: true,
-                headerStyle: {
-                  backgroundColor: "#7A2C34",
-                },
-                headerTintColor: "#fff",
-              }}
-            />
-          </Drawer.Navigator>
-        </NavigationContainer>
-      </SafeAreaProvider>
-    </UserProvider>
+          />
+          <Drawer.Screen
+            name="Perfil"
+            component={Perfil}
+            options={{
+              title: "Perfil",
+              drawerIcon: ({ color, size }) => (
+                <MaterialIcons name="person" size={size} color={color} />
+              ),
+              headerShown: false,
+            }}
+          />
+          <Drawer.Screen
+            name="SoundTest"
+            component={SoundTest}
+            options={{
+              title: "Probar Sonidos",
+              drawerIcon: ({ color, size }) => (
+                <MaterialIcons name="volume-up" size={size} color={color} />
+              ),
+              headerShown: true,
+              headerStyle: {
+                backgroundColor: "#7A2C34",
+              },
+              headerTintColor: "#fff",
+            }}
+          />
+        </Drawer.Navigator>
+      </NavigationContainer>
+    </SafeAreaProvider>
   );
 }

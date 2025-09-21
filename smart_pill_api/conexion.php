@@ -1,5 +1,8 @@
 <?php
 // db.php
+// Configurar zona horaria de Argentina
+date_default_timezone_set('America/Argentina/Buenos_Aires');
+
 $host = "localhost";
 $user = "root";
 $pass = "";

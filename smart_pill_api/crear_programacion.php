@@ -1,6 +1,14 @@
 <?php
 header("Access-Control-Allow-Origin: *");
+header("Access-Control-Allow-Methods: POST, GET, OPTIONS");
+header("Access-Control-Allow-Headers: Content-Type");
 header("Content-Type: application/json; charset=UTF-8");
+
+// Manejar preflight requests
+if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
+    exit(0);
+}
+
 include "conexion.php";
 
 try {
@@ -53,6 +61,12 @@ try {
     $conn->begin_transaction();
     
     try {
+        // Verificar que el remedio_global_id existe
+        $check_remedio = $conn->query("SELECT 1 FROM remedio_global WHERE remedio_global_id = $remedio_global_id");
+        if (!$check_remedio || $check_remedio->num_rows === 0) {
+            throw new Exception("El remedio con ID $remedio_global_id no existe en la base de datos");
+        }
+        
         // Insertar la programación
         $sql = "INSERT INTO programacion_tratamientos (
                     usuario_id, 
@@ -62,7 +76,8 @@ try {
                     fecha_fin, 
                     dosis_por_toma, 
                     observaciones, 
-                    estado
+                    estado,
+                    tiene_alarmas
                 ) VALUES (
                     $usuario_id,
                     $remedio_global_id,
@@ -71,7 +86,8 @@ try {
                     '$fecha_fin',
                     " . ($dosis_por_toma ? "'$dosis_por_toma'" : "NULL") . ",
                     " . ($observaciones ? "'$observaciones'" : "NULL") . ",
-                    '$estado'
+                    '$estado',
+                    1
                 )";
                 
         if (!$conn->query($sql)) {
@@ -80,12 +96,7 @@ try {
         
         $programacion_id = $conn->insert_id;
         $horarios_creados = 0;
-        
-        // Verificar que el remedio_global_id existe
-        $check_remedio = $conn->query("SELECT 1 FROM remedio_global WHERE remedio_global_id = $remedio_global_id");
-        if (!$check_remedio || $check_remedio->num_rows === 0) {
-            throw new Exception("El remedio con ID $remedio_global_id no existe en la base de datos");
-        }
+        $alarmas_creadas = 0;
         
         // Procesar horarios si se proporcionan
         if (isset($data->horarios) && is_array($data->horarios) && count($data->horarios) > 0) {
@@ -110,9 +121,14 @@ try {
                     throw new Exception("Día de la semana inválido: $dia_semana. Debe ser: " . implode(', ', $dias_validos));
                 }
                 
-                // Validar formato de hora
-                if (!preg_match('/^([01]?[0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$/', $hora)) {
-                    throw new Exception("Formato de hora inválido: $hora. Use formato HH:MM:SS");
+                // Validar formato de hora (permitir HH:MM o HH:MM:SS)
+                if (!preg_match('/^([01]?[0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$/', $hora)) {
+                    throw new Exception("Formato de hora inválido: $hora. Use formato HH:MM o HH:MM:SS");
+                }
+                
+                // Agregar segundos si no están presentes
+                if (substr_count($hora, ':') == 1) {
+                    $hora .= ':00';
                 }
                 
                 // Verificar si ya existe este horario
@@ -130,11 +146,6 @@ try {
                 
                 if ($row_check['existe'] == 0) {
                     // Insertar el horario
-                    // Verificar que todos los IDs sean válidos antes de insertar
-                    if ($programacion_id <= 0 || $usuario_id <= 0 || $remedio_global_id <= 0) {
-                        throw new Exception("Error: IDs inválidos. Programación: $programacion_id, Usuario: $usuario_id, Remedio: $remedio_global_id");
-                    }
-                    
                     $sql_horario = "INSERT INTO horarios_tratamiento (
                         tratamiento_id, usuario_id, remedio_global_id, dia_semana, hora, dosis, activo
                     ) VALUES (
@@ -151,14 +162,61 @@ try {
             }
         }
         
+        // Procesar alarmas si se proporcionan
+        if (isset($data->alarmas) && is_array($data->alarmas) && count($data->alarmas) > 0) {
+            foreach ($data->alarmas as $alarma) {
+                if (!isset($alarma->hora) || empty($alarma->hora)) {
+                    continue; // Saltar alarmas sin hora
+                }
+                
+                $hora_alarma = $conn->real_escape_string($alarma->hora);
+                $dias_semana = isset($alarma->dias_semana) ? $conn->real_escape_string($alarma->dias_semana) : "1,2,3,4,5,6,0";
+                $activa = isset($alarma->activa) ? intval($alarma->activa) : 1;
+                
+                // Agregar segundos si no están presentes
+                if (substr_count($hora_alarma, ':') == 1) {
+                    $hora_alarma .= ':00';
+                }
+                
+                // Verificar si ya existe esta alarma
+                $sql_check_alarma = "SELECT COUNT(*) as existe FROM alarmas 
+                                    WHERE programacion_id = $programacion_id 
+                                    AND hora = '$hora_alarma'";
+                
+                $res_check_alarma = $conn->query($sql_check_alarma);
+                if ($res_check_alarma) {
+                    $row_check_alarma = $res_check_alarma->fetch_assoc();
+                    
+                    if ($row_check_alarma['existe'] == 0) {
+                        // Crear la alarma
+                        $sql_alarma = "INSERT INTO alarmas (
+                            programacion_id, hora, dias_semana, activa, fecha_creacion
+                        ) VALUES (
+                            $programacion_id, '$hora_alarma', '$dias_semana', $activa, NOW()
+                        )";
+                        
+                        if ($conn->query($sql_alarma)) {
+                            $alarmas_creadas++;
+                        }
+                    }
+                }
+            }
+        }
+        
         // Confirmar transacción
         $conn->commit();
         
         echo json_encode([
             "success" => true, 
+            "data" => [
+                "programacion_id" => $programacion_id,
+                "horarios_creados" => $horarios_creados,
+                "alarmas_creadas" => $alarmas_creadas,
+                "success" => true
+            ],
             "programacion_id" => $programacion_id,
             "horarios_creados" => $horarios_creados,
-            "message" => "Programación creada exitosamente con $horarios_creados horarios"
+            "message" => "Tratamiento creado exitosamente con $horarios_creados horarios y $alarmas_creadas alarmas"
         ]);
         
     } catch (Exception $e) {
@@ -168,8 +226,12 @@ try {
     }
     
 } catch (Exception $e) {
-    echo json_encode(["success" => false, "error" => $e->getMessage()]);
+    echo json_encode([
+        "success" => false, 
+        "error" => $e->getMessage(),
+        "data" => null
+    ]);
 }
 
 $conn->close();
-?> 
+?>

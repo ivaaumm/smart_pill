@@ -12,12 +12,16 @@ import {
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { playSoundPreview, stopCurrentSound } from '../utils/audioUtils';
+import { registrarToma, actualizarEstadoToma, formatearDatosParaRegistro, manejarErrorAPI, obtenerRegistroId } from '../utils/medicationLogAPI';
+import { useUser } from '../UserContextProvider';
+import { diagnoseNetworkIssues } from '../utils/networkDiagnostic';
 // Notificaciones removidas - solo pantalla directa
 
 const { width, height } = Dimensions.get('window');
 
 const AlarmScreen = ({ route, navigation }) => {
   const { notificationData } = route.params || {};
+  const { user } = useUser();
   const [pulseAnim] = useState(new Animated.Value(1));
   const [isPlaying, setIsPlaying] = useState(true);
   const [timeLeft, setTimeLeft] = useState(300); // 5 minutos en segundos
@@ -79,12 +83,71 @@ const AlarmScreen = ({ route, navigation }) => {
       await stopCurrentSound();
       setIsPlaying(false);
       
-      // Aquí puedes agregar lógica para marcar como tomado en la base de datos
-      // await marcarComoTomado(notificationData.programacionId);
+      // Debug: Verificar qué datos tenemos
+      console.log('🔍 DEBUG - notificationData completo:', JSON.stringify(notificationData, null, 2));
+      console.log('🔍 DEBUG - registro_id disponible:', notificationData?.registro_id);
+      
+      let registroId = notificationData?.registro_id;
+      
+      // Si no tenemos registro_id, intentar obtenerlo del endpoint
+      if (!registroId && notificationData?.programacionId && notificationData?.usuario_id) {
+        console.log('🔄 registro_id no disponible, obteniendo desde endpoint...');
+        console.log(`🔍 Obteniendo registro_id para programacion_id: ${notificationData.programacionId} usuario_id: ${notificationData.usuario_id}`);
+        
+        try {
+          registroId = await obtenerRegistroId(notificationData.programacionId, notificationData.usuario_id);
+          console.log('✅ registro_id obtenido:', registroId);
+        } catch (error) {
+          console.error('❌ Error obteniendo registro_id:', error);
+          
+          // Ejecutar diagnóstico de red cuando falla
+          console.log('🔍 Ejecutando diagnóstico de red...');
+          try {
+            const diagnostico = await diagnoseNetworkIssues();
+            console.log('📊 Resultado del diagnóstico:', diagnostico);
+            
+            if (diagnostico.success) {
+              Alert.alert(
+                'Error de Conectividad', 
+                `No se pudo conectar al servidor. URL detectada: ${diagnostico.workingUrl}\n\nRecomendación: ${diagnostico.recommendation}`
+              );
+            } else {
+              Alert.alert(
+                'Error de Conectividad', 
+                `No se puede conectar al servidor.\n\nRecomendación: ${diagnostico.recommendation}`
+              );
+            }
+          } catch (diagError) {
+            console.error('❌ Error en diagnóstico:', diagError);
+            Alert.alert('Error', 'No se puede actualizar el registro: problema de conectividad con el servidor');
+          }
+          
+          return;
+        }
+      }
+      
+      if (!registroId) {
+        console.error('❌ ERROR: No se encontró registro_id');
+        Alert.alert('Error', 'No se puede actualizar el registro: falta el ID del registro');
+        return;
+      }
+      
+      // Actualizar el estado del registro existente
+      const updateData = {
+        registro_id: registroId,
+        nuevo_estado: 'tomada',
+        observaciones: 'Medicamento tomado desde la pantalla de alarma'
+      };
+      
+      console.log('📝 Actualizando estado de toma en la base de datos:', updateData);
+      
+      const resultado = await actualizarEstadoToma(updateData);
+      
+      console.log('✅ Medicamento registrado exitosamente:', resultado);
       
       Alert.alert(
-        'Medicamento tomado',
-        '¡Excelente! Has marcado tu medicamento como tomado.',
+        '✅ Medicamento tomado',
+        '¡Excelente! Has marcado tu medicamento como tomado y se ha registrado correctamente.',
         [
           {
             text: 'OK',
@@ -94,25 +157,39 @@ const AlarmScreen = ({ route, navigation }) => {
       );
     } catch (error) {
       console.error('Error al marcar como tomado:', error);
-      Alert.alert('Error', 'No se pudo registrar la toma del medicamento');
+      const mensajeError = manejarErrorAPI(error);
+      Alert.alert('Error', `No se pudo registrar la toma del medicamento: ${mensajeError}`);
     }
   };
 
   const handleSnooze = async () => {
-    await stopCurrentSound();
-    setIsPlaying(false);
-    
-    // Sin notificaciones - solo cerrar pantalla
-    Alert.alert(
-      'Recordatorio pospuesto',
-      'Alarma pospuesta. La pantalla se cerrará.',
-      [
-        {
-          text: 'OK',
-          onPress: () => navigation.goBack(),
-        },
-      ]
-    );
+    try {
+      await handleAlarmAction('pospuesta', 'Medicamento pospuesto desde la pantalla de alarma');
+      
+      Alert.alert(
+        'Recordatorio pospuesto',
+        'Alarma pospuesta y registrada. La pantalla se cerrará.',
+        [
+          {
+            text: 'OK',
+            onPress: () => navigation.goBack(),
+          },
+        ]
+      );
+    } catch (error) {
+      console.error('Error al posponer:', error);
+      // Aún así cerrar la pantalla
+      Alert.alert(
+        'Recordatorio pospuesto',
+        'Alarma pospuesta. La pantalla se cerrará.',
+        [
+          {
+            text: 'OK',
+            onPress: () => navigation.goBack(),
+          },
+        ]
+      );
+    }
   };
 
   const handleSkip = () => {
@@ -128,9 +205,23 @@ const AlarmScreen = ({ route, navigation }) => {
           text: 'Omitir',
           style: 'destructive',
           onPress: async () => {
-            await stopCurrentSound();
-            setIsPlaying(false);
-            navigation.goBack();
+            try {
+              await handleAlarmAction('rechazada', 'Medicamento omitido desde la pantalla de alarma');
+              navigation.goBack();
+            } catch (error) {
+              console.error('Error al registrar omitir:', error);
+              const mensajeError = manejarErrorAPI(error);
+              Alert.alert(
+                'Error',
+                `Medicamento omitido pero no se pudo registrar: ${mensajeError}`,
+                [
+                  {
+                    text: 'OK',
+                    onPress: () => navigation.goBack(),
+                  },
+                ]
+              );
+            }
           },
         },
       ]
@@ -141,6 +232,101 @@ const AlarmScreen = ({ route, navigation }) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // Función para obtener registro_id desde el endpoint
+  const obtenerRegistroId = async (programacionId, usuarioId) => {
+    try {
+      console.log('🔍 Obteniendo registro_id para programación:', programacionId, 'usuario:', usuarioId);
+      
+      // Importar la función para obtener la URL base de la API
+      const { testConnectivity } = await import('../config');
+      const connectivityResult = await testConnectivity();
+      
+      if (!connectivityResult.success) {
+        throw new Error('No se pudo establecer conexión con el servidor');
+      }
+      
+      const apiBaseUrl = connectivityResult.workingUrl + 'smart_pill_api';
+      const url = `${apiBaseUrl}/obtener_registro_pendiente.php`;
+      
+      console.log('📡 URL del endpoint:', url);
+      
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          programacion_id: programacionId,
+          usuario_id: usuarioId
+        })
+      });
+      
+      const data = await response.json();
+      
+      console.log('📡 Respuesta del endpoint obtener_registro_pendiente:', data);
+      
+      if (data.success && data.registro_id) {
+        return data.registro_id;
+      } else {
+        throw new Error(data.error || data.message || 'No se encontró registro pendiente');
+      }
+    } catch (error) {
+      console.error('❌ Error al obtener registro_id:', error);
+      throw error;
+    }
+  };
+
+  // Función unificada para manejar acciones de alarma
+  const handleAlarmAction = async (action, observaciones) => {
+    try {
+      await stopCurrentSound();
+      setIsPlaying(false);
+      
+      // Debug: Verificar qué datos tenemos
+      console.log('🔍 DEBUG - notificationData completo:', JSON.stringify(notificationData, null, 2));
+      console.log('🔍 DEBUG - registro_id disponible:', notificationData?.registro_id);
+      
+      let registroId = notificationData?.registro_id;
+      
+      // Si no tenemos registro_id, intentar obtenerlo del endpoint
+      if (!registroId && notificationData?.programacionId && notificationData?.usuario_id) {
+        console.log('🔄 registro_id no disponible, obteniendo desde endpoint...');
+        try {
+          registroId = await obtenerRegistroId(notificationData.programacionId, notificationData.usuario_id);
+          console.log('✅ registro_id obtenido:', registroId);
+        } catch (error) {
+          console.error('❌ Error obteniendo registro_id:', error);
+          Alert.alert('Error', 'No se puede actualizar el registro: no se pudo obtener el ID del registro');
+          return;
+        }
+      }
+      
+      if (!registroId) {
+        console.error('❌ ERROR: No se encontró registro_id');
+        Alert.alert('Error', 'No se puede actualizar el registro: falta el ID del registro');
+        return;
+      }
+      
+      // Actualizar el estado del registro existente
+      const updateData = {
+        registro_id: registroId,
+        nuevo_estado: action,
+        observaciones: observaciones
+      };
+      
+      console.log('📝 Actualizando estado de toma en la base de datos:', updateData);
+      
+      const resultado = await actualizarEstadoToma(updateData);
+      
+      console.log('✅ Acción registrada exitosamente:', resultado);
+      
+      return resultado;
+    } catch (error) {
+      console.error('Error en handleAlarmAction:', error);
+      throw error;
+    }
   };
 
   return (

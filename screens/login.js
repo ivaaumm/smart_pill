@@ -12,7 +12,6 @@ import {
 import { apiRequest, API_CONFIG } from "../credenciales";
 import { useUser } from "../UserContextProvider";
 import { MaterialIcons } from "@expo/vector-icons";
-import { testServerConnection } from "../test-api.js";
 
 export default function Login(props) {
   const [usuario, setUsuario] = React.useState("");
@@ -44,23 +43,31 @@ export default function Login(props) {
       console.log("🔑 Respuesta del servidor:", response);
 
       if (response.success && response.data) {
-        // La respuesta exitosa ahora está en response.data directamente
+        // La respuesta exitosa está en response.data
         const userData = response.data;
         
-        setUser({
-          usuario_id: userData.usuario_id,
-          nombre: userData.nombre_usuario || userData.nombre,
-          correo: userData.correo || userData.email,
-          edad: userData.edad,
-          avatar: userData.avatar,
-        });
-        
-        Alert.alert(
-          "Inicio de sesión exitoso",
-          `Bienvenido ${userData.nombre_usuario || userData.nombre} a Smart Pill`
-        );
-        
-        props.navigation.navigate("Home");
+        // Verificar que tenemos los datos necesarios del usuario
+        if (userData.usuario_id && userData.nombre_usuario) {
+          setUser({
+            usuario_id: userData.usuario_id,
+            nombre: userData.nombre_usuario,
+            correo: userData.correo,
+            edad: userData.edad,
+            avatar: userData.avatar,
+          });
+          
+          Alert.alert(
+            "Inicio de sesión exitoso",
+            `Bienvenido ${userData.nombre_usuario} a Smart Pill`
+          );
+          
+          props.navigation.navigate("Home");
+        } else {
+          Alert.alert(
+            "Error al iniciar sesión",
+            "Datos de usuario incompletos"
+          );
+        }
       } else {
         // Manejar diferentes tipos de errores
         if (response.error === "TIMEOUT_ERROR") {
@@ -75,9 +82,11 @@ export default function Login(props) {
           );
         } else {
           // Error de credenciales o respuesta del servidor
+          // El backend devuelve el error directamente en response.data.error
+          const errorMessage = response.data?.error || "Credenciales incorrectas";
           Alert.alert(
             "Error al iniciar sesión",
-            response.data?.error || "Credenciales incorrectas"
+            errorMessage
           );
         }
       }
@@ -137,21 +146,6 @@ export default function Login(props) {
           style={{ marginTop: 10 }}
         >
           <Text style={styles.link}>¿No tienes cuenta? Regístrate</Text>
-        </TouchableOpacity>
-
-        {/* Botón de prueba de conectividad (solo para desarrollo) */}
-        <TouchableOpacity
-          onPress={testServerConnection}
-          style={{
-            marginTop: 20,
-            padding: 10,
-            backgroundColor: "#f0f0f0",
-            borderRadius: 10,
-          }}
-        >
-          <Text style={{ textAlign: "center", color: "#666" }}>
-            🔍 Probar conexión
-          </Text>
         </TouchableOpacity>
       </View>
     </View>

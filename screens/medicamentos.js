@@ -30,11 +30,11 @@ import { setupAllPermissions, checkPermissionsStatus } from '../utils/permission
 import { Picker } from "@react-native-picker/picker";
 import AlarmComponent from "./components/AlarmComponent";
 import { apiRequest, API_CONFIG } from "../config";
-import { UserContext } from "../UserContextProvider";
+import { useUser } from "../UserContextProvider";
 import DateTimePicker from "@react-native-community/datetimepicker";
 
 const Medicamentos = ({ navigation }) => {
-  const { user } = useContext(UserContext);
+  const { user } = useUser();
 
   // Verificar que apiRequest está disponible
   console.log("🔍 apiRequest disponible:", typeof apiRequest);
@@ -930,12 +930,12 @@ const Medicamentos = ({ navigation }) => {
     setLoading(true);
 
     try {
-      // Configurar permisos completos antes de programar alarmas
-      console.log('🔐 Configurando permisos antes de crear tratamiento...');
-      const permissionsGranted = await setupAllPermissions();
+      // Verificar permisos sin mostrar alertas que bloqueen el flujo
+      console.log('🔐 Verificando permisos antes de crear tratamiento...');
+      const permissionsStatus = await checkPermissionsStatus();
       
-      if (!permissionsGranted) {
-        console.warn('⚠️ Algunos permisos no fueron concedidos, pero continuando...');
+      if (!permissionsStatus.notifications) {
+        console.warn('⚠️ Permisos de notificación no concedidos, pero continuando...');
       }
       
       // Programar las alarmas en el sistema de notificaciones
@@ -994,7 +994,7 @@ const Medicamentos = ({ navigation }) => {
       // Primero normalizamos los horarios (quitamos segundos si existen)
       const horariosNormalizados = horariosConfigurados.map((horario) => ({
         ...horario,
-        hora: horario.hora.includes(":")
+        hora: (horario.hora && horario.hora.includes(":"))
           ? horario.hora.split(":").slice(0, 2).join(":")
           : horario.hora,
       }));
@@ -1019,6 +1019,15 @@ const Medicamentos = ({ navigation }) => {
 
       console.log("Horarios únicos para guardar:", horariosUnicos);
       console.log("Horarios para API:", horariosParaAPI);
+      console.log("🔍 Usuario actual:", user);
+      console.log("🔍 Usuario ID:", user?.usuario_id);
+
+      // Verificar que el usuario esté logueado
+      if (!user || !user.usuario_id) {
+        Alert.alert("Error", "No hay usuario logueado. Por favor, inicia sesión nuevamente.");
+        setLoading(false);
+        return;
+      }
 
       const dataToSend = {
         usuario_id: user.usuario_id,
@@ -1106,7 +1115,7 @@ const Medicamentos = ({ navigation }) => {
     }
   };
 
-  // Función para programar notificaciones después de crear un tratamiento
+  // Función optimizada para programar notificaciones después de crear un tratamiento
   const programarNotificacionesTratamiento = async ({
     programacionId,
     nombreTratamiento,
@@ -1115,87 +1124,48 @@ const Medicamentos = ({ navigation }) => {
     dosisPorToma
   }) => {
     try {
-      console.log("📅 Iniciando programación de notificaciones...");
-      console.log("📅 Programación ID:", programacionId);
-      console.log("📅 Nombre tratamiento:", nombreTratamiento);
-      console.log("📅 Horarios a programar:", horarios);
-      console.log("📅 Fecha inicio:", fechaInicio);
-      console.log("📅 Dosis por toma:", dosisPorToma);
+      console.log("📅 Programando notificaciones para:", nombreTratamiento);
 
-      const fechaInicioDate = new Date(fechaInicio);
-      const ahora = new Date();
-      
-      // Mapeo de días de la semana
+      // Mapeo optimizado de días de la semana
       const nombresDias = {
         'lunes': 1, 'martes': 2, 'miercoles': 3, 'jueves': 4,
         'viernes': 5, 'sabado': 6, 'domingo': 0
       };
 
       let notificacionesProgramadas = 0;
+      const ahora = Date.now();
+      const fechaInicioTime = new Date(fechaInicio).getTime();
 
+      // Procesar horarios de forma optimizada
       for (const horario of horarios) {
-        const { dia_semana, hora, dosis } = horario;
+        const { dia_semana, hora } = horario;
         
-        console.log(`📅 Procesando: ${dia_semana} a las ${hora}`);
-        
-        // Obtener el número del día de la semana
+        // Validación rápida del día
         const numeroDia = nombresDias[dia_semana.toLowerCase()];
-        if (numeroDia === undefined) {
-          console.warn(`⚠️ Día no reconocido: ${dia_semana}`);
-          continue;
-        }
+        if (numeroDia === undefined) continue;
 
-        // VALIDACIÓN CRÍTICA: Solo programar si corresponde al día y horario según fecha de inicio
-        const fechaInicioDay = fechaInicioDate.getDay();
-        const [horaInicio, minutoInicio] = hora.split(':');
+        // Cálculo optimizado de fecha
+        const [horaNum, minutoNum] = hora.split(':').map(Number);
+        const fechaNotificacion = new Date(fechaInicioTime);
+        fechaNotificacion.setHours(horaNum, minutoNum, 0, 0);
         
-        // Crear fecha de referencia para este día y hora específicos
-        const fechaReferencia = new Date(fechaInicioDate);
-        fechaReferencia.setHours(parseInt(horaInicio), parseInt(minutoInicio), 0, 0);
-        
-        // Verificar si este día de la semana corresponde con la fecha de inicio del tratamiento
-        let fechaNotificacion = new Date(fechaReferencia);
-        
-        // Si el día del horario no coincide con el día de inicio, calcular la próxima ocurrencia
-        if (numeroDia !== fechaInicioDay) {
-          const diasDiferencia = (numeroDia - fechaInicioDay + 7) % 7;
-          fechaNotificacion.setDate(fechaReferencia.getDate() + diasDiferencia);
+        // Ajustar al día correcto de la semana
+        const diasDiferencia = (numeroDia - fechaNotificacion.getDay() + 7) % 7;
+        if (diasDiferencia > 0) {
+          fechaNotificacion.setDate(fechaNotificacion.getDate() + diasDiferencia);
         }
         
-        // Si la fecha calculada ya pasó, programar para la próxima semana
-        if (fechaNotificacion <= ahora) {
-          fechaNotificacion.setDate(fechaNotificacion.getDate() + 7);
-        }
-        
-        // VALIDACIÓN ADICIONAL: No programar si falta menos de 5 minutos (evitar notificaciones inmediatas)
-        const tiempoHastaNotificacion = fechaNotificacion.getTime() - ahora.getTime();
-        if (tiempoHastaNotificacion < 5 * 60 * 1000) { // Menos de 5 minutos
-          console.log(`⚠️ Notificación muy próxima (${Math.round(tiempoHastaNotificacion / (1000 * 60))} min), programando para la próxima semana: ${dia_semana} ${hora}`);
+        // Si ya pasó, programar para la próxima semana
+        if (fechaNotificacion.getTime() <= ahora + (2 * 60 * 1000)) {
           fechaNotificacion.setDate(fechaNotificacion.getDate() + 7);
         }
 
-        console.log(`📅 Fecha calculada para ${dia_semana} ${hora}:`, fechaNotificacion.toLocaleString('es-AR'));
-        console.log(`📅 Tiempo hasta notificación: ${Math.round((fechaNotificacion.getTime() - ahora.getTime()) / (1000 * 60))} minutos`);
-
-        // Solo guardar alarma para pantalla directa si la fecha es válida
-        if (fechaNotificacion > ahora) {
-          const alarmaId = `tratamiento_${programacionId}_${dia_semana}_${hora.replace(':', '')}`;
-          
-          // Guardar alarma para mostrar pantalla directa (sin notificación)
-          console.log(`✅ Alarma configurada para pantalla directa: ${alarmaId}`);
-          notificacionesProgramadas++;
-        } else {
-          console.error(`❌ Fecha no válida para ${dia_semana} ${hora}`);
-        }
+        // Crear ID de alarma optimizado
+        const alarmaId = `tratamiento_${programacionId}_${numeroDia}_${horaNum}${minutoNum}`;
+        notificacionesProgramadas++;
       }
 
-      console.log(`✅ Total de notificaciones programadas: ${notificacionesProgramadas}/${horarios.length}`);
-      
-      if (notificacionesProgramadas > 0) {
-        console.log(`🎉 Tratamiento "${nombreTratamiento}" programado exitosamente con ${notificacionesProgramadas} notificaciones`);
-      } else {
-        console.warn(`⚠️ No se pudieron programar notificaciones para el tratamiento "${nombreTratamiento}"`);
-      }
+      console.log(`✅ ${notificacionesProgramadas} notificaciones programadas para "${nombreTratamiento}"`);
 
     } catch (error) {
       console.error("❌ Error programando notificaciones del tratamiento:", error);
@@ -1318,7 +1288,7 @@ const Medicamentos = ({ navigation }) => {
       // Primero normalizamos los horarios (quitamos segundos si existen)
       const horariosNormalizados = horariosConfigurados.map((horario) => ({
         ...horario,
-        hora: horario.hora.includes(":")
+        hora: (horario.hora && horario.hora.includes(":"))
           ? horario.hora.split(":").slice(0, 2).join(":")
           : horario.hora,
       }));
@@ -2695,7 +2665,7 @@ const Medicamentos = ({ navigation }) => {
                             </View>
                             <View style={styles.horariosListHorizontal}>
                               {horas.map((hora, i) => {
-                                const horaFormateada = hora.includes(":")
+                                const horaFormateada = (hora && hora.includes(":"))
                                   ? hora.split(":").slice(0, 2).join(":")
                                   : hora;
                                 return (

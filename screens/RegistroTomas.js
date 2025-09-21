@@ -35,22 +35,67 @@ const RegistroTomas = () => {
     
     try {
       setLoading(true);
+      // Buscar desde hace 7 días hasta 7 días en el futuro para incluir registros programados
       const fechaDesde = new Date();
-      fechaDesde.setDate(fechaDesde.getDate() - 7); // Últimos 7 días
+      fechaDesde.setDate(fechaDesde.getDate() - 7);
       const fechaDesdeStr = fechaDesde.toISOString().split('T')[0];
       
-      const response = await fetch(
-        `http://192.168.0.125/smart_pill/smart_pill_api/registro_tomas.php?usuario_id=${user.usuario_id}&fecha_desde=${fechaDesdeStr}`
-      );
+      const fechaHasta = new Date();
+      fechaHasta.setDate(fechaHasta.getDate() + 7);
+      const fechaHastaStr = fechaHasta.toISOString().split('T')[0];
+      
+      const url = `http://192.168.1.87/smart_pill/smart_pill_api/registro_tomas.php?usuario_id=${user.usuario_id}&fecha_desde=${fechaDesdeStr}&fecha_hasta=${fechaHastaStr}`;
+      
+      console.log(`🔍 Cargando registros para usuario ${user.usuario_id}`);
+      console.log(`📅 Rango de fechas: ${fechaDesdeStr} hasta ${fechaHastaStr}`);
+      console.log(`🌐 URL completa: ${url}`);
+      
+      const response = await fetch(url);
+      
+      console.log(`📡 Status de respuesta: ${response.status}`);
+      console.log(`📡 Headers de respuesta:`, response.headers);
       
       if (response.ok) {
-        const data = await response.json();
-        setRegistros(Array.isArray(data) ? data : []);
+        const responseText = await response.text();
+        console.log(`📥 Respuesta cruda (primeros 500 chars):`, responseText.substring(0, 500));
+        
+        let data;
+        try {
+          data = JSON.parse(responseText);
+          console.log('📋 Respuesta parseada:', data);
+        } catch (parseError) {
+          console.error('❌ Error parseando JSON:', parseError);
+          console.error('❌ Respuesta que causó el error:', responseText);
+          Alert.alert('Error', 'Error en el formato de respuesta del servidor');
+          return;
+        }
+        
+        // Corregir: usar data.registros en lugar de data directamente
+        if (data.success && Array.isArray(data.registros)) {
+          console.log(`✅ ${data.registros.length} registros encontrados`);
+          console.log('📋 Registros detallados:', data.registros.map(r => ({
+            id: r.registro_id,
+            medicamento: r.nombre_comercial,
+            fecha: r.fecha_programada,
+            hora: r.hora_programada,
+            estado: r.estado
+          })));
+          
+          setRegistros(data.registros);
+        } else {
+          console.log('⚠️ No se encontraron registros o estructura incorrecta');
+          console.log('⚠️ Estructura de data:', data);
+          setRegistros([]);
+        }
       } else {
-        Alert.alert('Error', 'No se pudieron cargar los registros');
+        const errorText = await response.text();
+        console.error(`❌ Error HTTP ${response.status}:`, errorText);
+        Alert.alert('Error', `No se pudieron cargar los registros (${response.status})`);
         setRegistros([]);
       }
     } catch (error) {
+      console.error('❌ Error cargando registros:', error);
+      console.error('❌ Error stack:', error.stack);
       Alert.alert('Error', 'Error de conexión: ' + error.message);
       setRegistros([]);
     } finally {
@@ -66,27 +111,64 @@ const RegistroTomas = () => {
 
   const confirmarToma = async (registroId) => {
     try {
+      console.log(`🔄 Confirmando toma para registro ID: ${registroId}`);
+      
+      const requestData = {
+        registro_id: registroId,
+        estado: 'tomada',
+        observaciones: 'Actualizado desde el registro de tomas'
+      };
+      
+      console.log('📤 Enviando datos:', requestData);
+      
+      // PRIMERO: Enviar al endpoint de debug para capturar la petición
+      try {
+        console.log('🔍 Enviando petición al endpoint de debug...');
+        const debugResponse = await fetch(
+          'http://192.168.1.87/smart_pill/debug_peticiones_app.php',
+          {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(requestData)
+          }
+        );
+        const debugData = await debugResponse.json();
+        console.log('🔍 Debug response:', debugData);
+      } catch (debugError) {
+        console.log('⚠️ Error en debug endpoint (no crítico):', debugError);
+      }
+      
+      // SEGUNDO: Enviar al endpoint real
+      console.log('📡 Enviando petición al endpoint real...');
       const response = await fetch(
-        'http://192.168.0.125/smart_pill/smart_pill_api/confirmar_toma.php',
+        'http://192.168.1.87/smart_pill/smart_pill_api/registro_tomas.php',
         {
-          method: 'POST',
+          method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            registro_id: registroId,
-            estado: 'completada'
-          })
+          body: JSON.stringify(requestData)
         }
       );
       
+      console.log(`📡 Respuesta HTTP status: ${response.status}`);
+      console.log(`📡 Respuesta headers:`, response.headers);
+      
       if (response.ok) {
+        const responseData = await response.json();
+        console.log('✅ Respuesta exitosa:', responseData);
         Alert.alert('Éxito', 'Toma confirmada correctamente');
         cargarRegistros();
       } else {
-        Alert.alert('Error', 'No se pudo confirmar la toma');
+        const errorData = await response.text();
+        console.error('❌ Error en respuesta:', errorData);
+        Alert.alert('Error', `No se pudo confirmar la toma. Status: ${response.status}\nRespuesta: ${errorData.substring(0, 200)}`);
       }
     } catch (error) {
+      console.error('❌ Error en confirmarToma:', error);
+      console.error('❌ Error stack:', error.stack);
       Alert.alert('Error', 'Error de conexión: ' + error.message);
     }
   };
@@ -94,27 +176,36 @@ const RegistroTomas = () => {
   const renderRegistro = ({ item }) => {
     const getEstadoColor = (estado) => {
       switch (estado) {
+        case 'tomada': return '#28a745';
         case 'completada': return '#28a745';
         case 'pospuesta': return '#ffc107';
+        case 'rechazada': return '#dc3545';
         case 'perdida': return '#dc3545';
+        case 'pendiente': return '#6c757d';
         default: return '#7A2C34';
       }
     };
 
     const getEstadoIcon = (estado) => {
       switch (estado) {
+        case 'tomada': return 'check-circle';
         case 'completada': return 'check-circle';
         case 'pospuesta': return 'schedule';
+        case 'rechazada': return 'cancel';
         case 'perdida': return 'cancel';
+        case 'pendiente': return 'pending';
         default: return 'pending';
       }
     };
 
     const getEstadoTexto = (estado) => {
       switch (estado) {
+        case 'tomada': return 'Tomada';
         case 'completada': return 'Completada';
         case 'pospuesta': return 'Pospuesta';
         case 'perdida': return 'Perdida';
+        case 'rechazada': return 'Rechazada';
+        case 'pendiente': return 'Pendiente';
         default: return 'Pendiente';
       }
     };
@@ -161,17 +252,17 @@ const RegistroTomas = () => {
           </View>
           <View style={styles.horaInfo}>
             <MaterialIcons name="access-time" size={16} color="#666" />
-            <Text style={styles.horaTexto}>{item.hora_programada}</Text>
+            <Text style={styles.horaTexto}>{item.hora_programada ? item.hora_programada.substring(0, 5) : '--:--'}</Text>
           </View>
         </View>
         
-        {item.estado === 'pendiente' && (
+        {(item.estado === 'pendiente' || item.estado === 'pospuesta' || item.estado === 'rechazada') && (
           <TouchableOpacity
             style={styles.confirmarButton}
             onPress={() => confirmarToma(item.registro_id)}
           >
             <MaterialIcons name="check" size={20} color="white" />
-            <Text style={styles.confirmarButtonText}>Confirmar Toma</Text>
+            <Text style={styles.confirmarButtonText}>Marcar como Tomada</Text>
           </TouchableOpacity>
         )}
       </View>

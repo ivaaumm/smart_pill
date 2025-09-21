@@ -122,8 +122,8 @@ const loadSound = async (soundName) => {
     if (soundObjects[soundKey]) {
       console.log(`🔄 [AUDIO LOG] Liberando sonido anterior: ${soundKey}`);
       try {
-        if (soundObjects[soundKey].unloadAsync) {
-          await soundObjects[soundKey].unloadAsync();
+        if (soundObjects[soundKey].release) {
+          soundObjects[soundKey].release();
           console.log(`✅ [AUDIO LOG] Sonido anterior liberado: ${soundKey}`);
         }
       } catch (e) {
@@ -237,20 +237,19 @@ export const stopCurrentSound = async () => {
         // Pausar sonido con expo-audio
         console.log('🔄 [AUDIO LOG] Pausando sonido actual');
         try {
-          await currentSound.pauseAsync();
+          currentSound.pause();
           console.log('✅ [AUDIO LOG] Sonido pausado exitosamente');
         } catch (pauseError) {
           console.warn('⚠️ [AUDIO LOG] Error pausando sonido:', pauseError.message);
         }
         
         // Liberar recursos si es posible
-        if (currentSound.unloadAsync && typeof currentSound.unloadAsync === 'function') {
-          console.log('🔄 [AUDIO LOG] Liberando recursos con unloadAsync()');
+        if (currentSound.release && typeof currentSound.release === 'function') {
           try {
-            await currentSound.unloadAsync();
+            currentSound.release();
             console.log('✅ [AUDIO LOG] Recursos liberados correctamente');
-          } catch (unloadError) {
-            console.warn('⚠️ [AUDIO LOG] Error liberando recursos:', unloadError.message);
+          } catch (releaseError) {
+            console.warn('⚠️ [AUDIO LOG] Error liberando recursos:', releaseError.message);
           }
         }
         
@@ -305,7 +304,7 @@ export const pausePlayingSounds = async () => {
           
           // Pausar con expo-audio
           try {
-            await sound.pauseAsync();
+            sound.pause();
             console.log(`⏸️ [AUDIO LOG] Sonido ${soundName} pausado`);
           } catch (pauseError) {
             console.warn(`⚠️ [AUDIO LOG] Error pausando ${soundName}:`, pauseError.message);
@@ -334,10 +333,10 @@ export const pausePlayingSounds = async () => {
           }
         }
         
-        if (cached.sound.pauseAsync && typeof cached.sound.pauseAsync === 'function') {
+        if (cached.sound.pause && typeof cached.sound.pause === 'function') {
           try {
-            await cached.sound.pauseAsync();
-            console.log(`⏸️ [AUDIO LOG] Sonido cache ${key} pausado con pauseAsync()`);
+            cached.sound.pause();
+            console.log(`⏸️ [AUDIO LOG] Sonido cache ${key} pausado con pause()`);
           } catch (pauseError) {
             console.warn(`⚠️ [AUDIO LOG] Error pausando cache ${key}:`, pauseError.message);
           }
@@ -392,22 +391,22 @@ export const stopAllSounds = async () => {
           }
           
           // Pausar sonido
-          if (sound.pauseAsync && typeof sound.pauseAsync === 'function') {
+          if (sound.pause && typeof sound.pause === 'function') {
             try {
-              await sound.pauseAsync();
-              console.log(`✅ [AUDIO LOG] Sonido ${soundName} pausado con pauseAsync()`);
+              sound.pause();
+              console.log(`✅ [AUDIO LOG] Sonido ${soundName} pausado con pause()`);
             } catch (pauseError) {
-              console.warn(`⚠️ [AUDIO LOG] Error con pauseAsync() en ${soundName}:`, pauseError.message);
+              console.warn(`⚠️ [AUDIO LOG] Error con pause() en ${soundName}:`, pauseError.message);
             }
           }
           
           // Liberar recursos
-          if (sound.unloadAsync && typeof sound.unloadAsync === 'function') {
+          if (sound.release && typeof sound.release === 'function') {
             try {
-              await sound.unloadAsync();
+              sound.release();
               console.log(`✅ [AUDIO LOG] Recursos de ${soundName} liberados`);
-            } catch (unloadError) {
-              console.warn(`⚠️ [AUDIO LOG] Error liberando ${soundName}:`, unloadError.message);
+            } catch (releaseError) {
+              console.warn(`⚠️ [AUDIO LOG] Error liberando ${soundName}:`, releaseError.message);
             }
           }
           
@@ -437,22 +436,22 @@ export const stopAllSounds = async () => {
         }
         
         // Pausar sonido
-        if (cached.sound.pauseAsync && typeof cached.sound.pauseAsync === 'function') {
+        if (cached.sound.pause && typeof cached.sound.pause === 'function') {
           try {
-            await cached.sound.pauseAsync();
-            console.log(`✅ [AUDIO LOG] Sonido cache ${key} pausado con pauseAsync()`);
+            cached.sound.pause();
+            console.log(`✅ [AUDIO LOG] Sonido cache ${key} pausado con pause()`);
           } catch (pauseError) {
-            console.warn(`⚠️ [AUDIO LOG] Error con pauseAsync() en cache ${key}:`, pauseError.message);
+            console.warn(`⚠️ [AUDIO LOG] Error con pause() en cache ${key}:`, pauseError.message);
           }
         }
         
         // Liberar recursos
-        if (cached.sound.unloadAsync && typeof cached.sound.unloadAsync === 'function') {
+        if (cached.sound.release && typeof cached.sound.release === 'function') {
           try {
-            await cached.sound.unloadAsync();
+            cached.sound.release();
             console.log(`✅ [AUDIO LOG] Recursos de cache ${key} liberados`);
-          } catch (unloadError) {
-            console.warn(`⚠️ [AUDIO LOG] Error liberando cache ${key}:`, unloadError.message);
+          } catch (releaseError) {
+            console.warn(`⚠️ [AUDIO LOG] Error liberando cache ${key}:`, releaseError.message);
           }
         }
         
@@ -770,8 +769,8 @@ export const playSoundPreview = async (soundName) => {
     console.log('🔄 [AUDIO LOG] Validación de sonido dinámico:', validation);
     if (!validation.isValid) {
       console.error('❌ [AUDIO LOG] Sonido dinámico no es válido');
-      if (newSound.unloadAsync) {
-        await newSound.unloadAsync();
+      if (newSound.release) {
+        newSound.release();
       }
       throw new Error(`El sonido no se cargó correctamente: ${soundKey}`);
     }
@@ -829,6 +828,47 @@ export const playSoundPreview = async (soundName) => {
     // Error final - no se pudo reproducir el sonido
     console.error('❌ [AUDIO LOG] Error final reproduciendo sonido');
     throw new Error(`No se pudo reproducir el sonido ${soundKey}: ${error.message}`);
+  }
+};
+
+// Programar una notificación pospuesta (snooze) para 10 minutos después
+export const scheduleSnoozeNotification = async (originalNotificationData) => {
+  try {
+    console.log('⏰ Programando notificación pospuesta para 10 minutos...');
+    
+    // Calcular la nueva fecha (10 minutos después)
+    const snoozeDate = new Date();
+    snoozeDate.setMinutes(snoozeDate.getMinutes() + 10);
+    
+    // Crear un ID único para la notificación pospuesta
+    const snoozeId = `snooze_${originalNotificationData.id || Date.now()}`;
+    
+    // Programar la nueva notificación
+    const notificationResult = await scheduleNotification({
+      id: snoozeId,
+      title: `⏰ Recordatorio pospuesto: ${originalNotificationData.medicamento || 'Medicamento'}`,
+      body: `Es hora de tomar tu medicamento. Dosis: ${originalNotificationData.dosis || '1 tableta'}`,
+      sound: originalNotificationData.sound || 'alarm',
+      date: snoozeDate,
+      data: {
+        ...originalNotificationData,
+        isSnooze: true,
+        originalId: originalNotificationData.id
+      },
+      medicamento: originalNotificationData.medicamento || 'Medicamento',
+      dosis: originalNotificationData.dosis || '1 tableta'
+    });
+    
+    console.log('✅ Notificación pospuesta programada exitosamente:', {
+      id: snoozeId,
+      fecha: snoozeDate.toLocaleString('es-AR'),
+      medicamento: originalNotificationData.medicamento
+    });
+    
+    return notificationResult;
+  } catch (error) {
+    console.error('❌ Error al programar notificación pospuesta:', error);
+    throw error;
   }
 };
 
@@ -973,8 +1013,8 @@ const cleanupSoundCache = async () => {
   for (const [key, cached] of soundCache.entries()) {
     if (now - cached.lastUsed > maxAge) {
       try {
-        if (cached.sound.unloadAsync) {
-          await cached.sound.unloadAsync();
+        if (cached.sound.release) {
+          cached.sound.release();
         }
       } catch (e) {
         console.warn('Error liberando sonido del cache:', e);
@@ -1385,8 +1425,8 @@ export const unloadSounds = async () => {
   // Limpiar cache
   for (const [key, cached] of soundCache.entries()) {
     try {
-      if (cached.sound.unloadAsync) {
-        await cached.sound.unloadAsync();
+      if (cached.sound.release) {
+        cached.sound.release();
       }
     } catch (e) {
       console.error(`Error liberando ${key}:`, e);
@@ -1397,8 +1437,8 @@ export const unloadSounds = async () => {
   // Limpiar sonidos precargados
   for (const [key, sound] of Object.entries(preloadedSounds)) {
     try {
-      if (sound.unloadAsync) {
-        await sound.unloadAsync();
+      if (sound.release) {
+        sound.release();
       }
     } catch (e) {
       console.error(`Error liberando ${key}:`, e);
@@ -1410,8 +1450,8 @@ export const unloadSounds = async () => {
   for (const sound of Object.values(soundObjects)) {
     if (sound) {
       try {
-        if (sound.unloadAsync) {
-          await sound.unloadAsync();
+        if (sound.release) {
+          sound.release();
         }
       } catch (e) {
         console.error('Error liberando sonido:', e);
