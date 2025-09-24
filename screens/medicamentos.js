@@ -71,6 +71,10 @@ const Medicamentos = ({ navigation }) => {
   const [modalDetallesVisible, setModalDetallesVisible] = useState(false);
   const [modalTipo, setModalTipo] = useState(null); // 'pastilla' o 'programacion'
   const [pastillaDetalles, setPastillaDetalles] = useState(null);
+  const [forceModalRender, setForceModalRender] = useState(0); // Para forzar re-render del modal
+  // Estados para el modal de detalles - NUEVA IMPLEMENTACIÓN
+  const [showPillModal, setShowPillModal] = useState(false);
+  const [currentPillData, setCurrentPillData] = useState(null);
   const [programaciones, setProgramaciones] = useState([]);
   const [loadingProgramaciones, setLoadingProgramaciones] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -354,8 +358,8 @@ const Medicamentos = ({ navigation }) => {
       const validatedPastillas = pastillasData.map((item) => ({
         remedio_global_id:
           item.remedio_global_id || Math.random().toString(36).substr(2, 9),
-        nombre_comercial: item.nombre || item.nombre_comercial || "Sin nombre",
-        descripcion: item.descripcion || item.descripcion || "",
+        nombre_comercial: item.nombre_comercial || item.nombre || "Sin nombre",
+        descripcion: item.descripcion || "",
         presentacion: item.presentacion || "",
         peso_unidad: item.peso_unidad || "N/A",
         efectos_secundarios: item.efectos_secundarios || "",
@@ -483,9 +487,33 @@ const Medicamentos = ({ navigation }) => {
 
   // Mostrar detalles de la pastilla
   const mostrarDetallesPastilla = (pastilla) => {
-    setPastillaDetalles(pastilla);
+    console.log("🔍 MODAL DEBUG - Datos de la pastilla:", pastilla);
+    console.log("🔍 MODAL DEBUG - Propiedades disponibles:", Object.keys(pastilla));
+    
+    // Asegurar que tenemos todos los campos necesarios
+    const pastillaCompleta = {
+      ...pastilla,
+      nombre_comercial: pastilla.nombre_comercial || pastilla.nombre,
+      descripcion: pastilla.descripcion || "No hay descripción disponible",
+      presentacion: pastilla.presentacion || "No especificada",
+      peso_unidad: pastilla.peso_unidad || "N/A",
+      efectos_secundarios: pastilla.efectos_secundarios || "No especificados",
+      remedio_global_id: pastilla.remedio_global_id || pastilla.id
+    };
+    
+    console.log("🔍 MODAL DEBUG - Pastilla completa para modal:", pastillaCompleta);
+    
+    // Establecer los estados de forma síncrona
+    setPastillaDetalles(pastillaCompleta);
     setModalTipo("pastilla");
     setModalDetallesVisible(true);
+    setForceModalRender(prev => prev + 1); // Forzar re-render
+    
+    console.log("🔍 MODAL DEBUG - Estados establecidos directamente");
+    console.log("🔍 MODAL DEBUG - pastillaDetalles:", pastillaCompleta);
+    console.log("🔍 MODAL DEBUG - modalTipo: pastilla");
+    console.log("🔍 MODAL DEBUG - modalDetallesVisible: true");
+    console.log("🔍 MODAL DEBUG - forceModalRender incrementado");
   };
 
   const mostrarDetallesProgramacion = (programacion) => {
@@ -2683,16 +2711,30 @@ const Medicamentos = ({ navigation }) => {
 
   // Renderizar modal de detalles de pastilla
   const renderModalDetalles = () => {
-    if (!pastillaDetalles || modalTipo !== "pastilla") return null;
+    console.log("🔍 RENDER DEBUG - pastillaDetalles:", pastillaDetalles);
+    console.log("🔍 RENDER DEBUG - modalTipo:", modalTipo);
+    console.log("🔍 RENDER DEBUG - modalDetallesVisible:", modalDetallesVisible);
+    console.log("🔍 RENDER DEBUG - forceModalRender:", forceModalRender);
+    
+    if (!pastillaDetalles || modalTipo !== "pastilla") {
+      console.log("🔍 RENDER DEBUG - Modal no se renderiza por condición");
+      return null;
+    }
 
+    console.log("🔍 RENDER DEBUG - Renderizando modal de pastilla");
+    
+    // Renderizar siempre que las condiciones se cumplan, independientemente de modalDetallesVisible
     return (
       <Modal
+        key={`modal-${forceModalRender}`} // Key única para forzar re-render
         animationType="slide"
         transparent={true}
-        visible={modalDetallesVisible}
+        visible={true} // Siempre visible si llegamos aquí
         onRequestClose={() => {
+          console.log("🔍 MODAL DEBUG - onRequestClose llamado");
           setModalDetallesVisible(false);
           setModalTipo(null);
+          setPastillaDetalles(null);
         }}
       >
         <View style={styles.modalOverlayCentered}>
@@ -2722,79 +2764,120 @@ const Medicamentos = ({ navigation }) => {
               showsVerticalScrollIndicator={false}
               contentContainerStyle={styles.modalDetallesBodyContent}
             >
-              {/* Nombre del medicamento destacado */}
-              <View style={styles.medicamentoCard}>
-                <MaterialIcons name="medication" size={32} color="#7A2C34" />
-                <Text style={styles.medicamentoNombre}>
-                  {pastillaDetalles.nombre_comercial}
+              {/* Información principal del medicamento */}
+              <View style={{
+                backgroundColor: '#fff',
+                padding: 20,
+                margin: 10,
+                borderRadius: 12,
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.1,
+                shadowRadius: 4,
+                elevation: 3
+              }}>
+                <Text style={{
+                  fontSize: 24,
+                  fontWeight: 'bold',
+                  color: '#2c3e50',
+                  textAlign: 'center',
+                  marginBottom: 10
+                }}>
+                  {pastillaDetalles?.nombre_comercial || pastillaDetalles?.nombre || "Medicamento"}
                 </Text>
-              </View>
+                
+                {pastillaDetalles?.nombre && pastillaDetalles?.nombre_comercial && (
+                  <Text style={{
+                    fontSize: 16,
+                    color: '#7f8c8d',
+                    textAlign: 'center',
+                    marginBottom: 20
+                  }}>
+                    {pastillaDetalles.nombre}
+                  </Text>
+                )}
 
-              {/* Información detallada */}
-              <View style={styles.detallesContainer}>
-                <View style={styles.detalleItem}>
-                  <MaterialIcons name="info" size={20} color="#7A2C34" />
-                  <View style={styles.detalleContent}>
-                    <Text style={styles.detalleLabel}>Descripción:</Text>
-                    <Text style={styles.detalleValue}>
-                      {pastillaDetalles.descripcion}
-                    </Text>
-                  </View>
+                {/* Descripción */}
+                <View style={{marginBottom: 15}}>
+                  <Text style={{
+                    fontSize: 16,
+                    fontWeight: 'bold',
+                    color: '#34495e',
+                    marginBottom: 5
+                  }}>📋 Descripción:</Text>
+                  <Text style={{
+                    fontSize: 14,
+                    color: '#2c3e50',
+                    lineHeight: 20
+                  }}>
+                    {pastillaDetalles?.descripcion || "No hay descripción disponible"}
+                  </Text>
                 </View>
 
-                {pastillaDetalles.presentacion && (
-                  <View style={styles.detalleItem}>
-                    <MaterialIcons name="inventory" size={20} color="#7A2C34" />
-                    <View style={styles.detalleContent}>
-                      <Text style={styles.detalleLabel}>Presentación:</Text>
-                      <Text style={styles.detalleValue}>
-                        {pastillaDetalles.presentacion}
-                      </Text>
-                    </View>
-                  </View>
-                )}
+                {/* Presentación */}
+                <View style={{marginBottom: 15}}>
+                  <Text style={{
+                    fontSize: 16,
+                    fontWeight: 'bold',
+                    color: '#34495e',
+                    marginBottom: 5
+                  }}>📦 Presentación:</Text>
+                  <Text style={{
+                    fontSize: 14,
+                    color: '#2c3e50'
+                  }}>
+                    {pastillaDetalles?.presentacion || "No especificada"}
+                  </Text>
+                </View>
 
-                {pastillaDetalles.peso_unidad && (
-                  <View style={styles.detalleItem}>
-                    <MaterialIcons name="scale" size={20} color="#7A2C34" />
-                    <View style={styles.detalleContent}>
-                      <Text style={styles.detalleLabel}>Peso por Unidad:</Text>
-                      <Text style={styles.detalleValue}>
-                        {pastillaDetalles.peso_unidad} mg
-                      </Text>
-                    </View>
-                  </View>
-                )}
+                {/* Peso */}
+                <View style={{marginBottom: 15}}>
+                  <Text style={{
+                    fontSize: 16,
+                    fontWeight: 'bold',
+                    color: '#34495e',
+                    marginBottom: 5
+                  }}>⚖️ Peso por Unidad:</Text>
+                  <Text style={{
+                    fontSize: 14,
+                    color: '#2c3e50'
+                  }}>
+                    {pastillaDetalles?.peso_unidad ? `${pastillaDetalles.peso_unidad} mg` : "No especificado"}
+                  </Text>
+                </View>
 
-                {pastillaDetalles.efectos_secundarios && (
-                  <View style={styles.detalleItem}>
-                    <MaterialIcons name="warning" size={20} color="#ff6b6b" />
-                    <View style={styles.detalleContent}>
-                      <Text style={styles.detalleLabel}>
-                        Efectos Secundarios:
-                      </Text>
-                      <Text style={styles.detalleValue}>
-                        {pastillaDetalles.efectos_secundarios}
-                      </Text>
-                    </View>
-                  </View>
-                )}
+                {/* Efectos secundarios */}
+                <View style={{marginBottom: 15}}>
+                  <Text style={{
+                    fontSize: 16,
+                    fontWeight: 'bold',
+                    color: '#e74c3c',
+                    marginBottom: 5
+                  }}>⚠️ Efectos Secundarios:</Text>
+                  <Text style={{
+                    fontSize: 14,
+                    color: '#2c3e50',
+                    lineHeight: 20
+                  }}>
+                    {pastillaDetalles?.efectos_secundarios || "No especificados"}
+                  </Text>
+                </View>
 
-                {pastillaDetalles.estado && (
-                  <View style={styles.detalleItem}>
-                    <MaterialIcons
-                      name="check-circle"
-                      size={20}
-                      color="#28a745"
-                    />
-                    <View style={styles.detalleContent}>
-                      <Text style={styles.detalleLabel}>Estado:</Text>
-                      <Text style={styles.detalleValue}>
-                        {pastillaDetalles.estado}
-                      </Text>
-                    </View>
-                  </View>
-                )}
+                {/* ID para debug */}
+                <View style={{
+                  backgroundColor: '#ecf0f1',
+                  padding: 10,
+                  borderRadius: 8,
+                  marginTop: 10
+                }}>
+                  <Text style={{
+                    fontSize: 12,
+                    color: '#7f8c8d',
+                    textAlign: 'center'
+                  }}>
+                    ID: {pastillaDetalles?.remedio_global_id || pastillaDetalles?.id || pastillaDetalles?.pastilla_id || "No disponible"}
+                  </Text>
+                </View>
               </View>
             </ScrollView>
 
@@ -4492,7 +4575,7 @@ const styles = StyleSheet.create({
   medicamentoNombre: {
     fontSize: 20,
     fontWeight: "700",
-    color: "#1e293b",
+    color: "#000000",
     marginTop: 12,
     textAlign: "center",
     letterSpacing: 0.2,
@@ -4523,13 +4606,13 @@ const styles = StyleSheet.create({
   detalleLabel: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#64748b",
+    color: "#000000",
     marginBottom: 6,
     letterSpacing: 0.1,
   },
   detalleValue: {
     fontSize: 15,
-    color: "#1e293b",
+    color: "#000000",
     lineHeight: 22,
     fontWeight: "500",
   },
