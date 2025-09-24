@@ -30,7 +30,7 @@ header('Content-Type: text/html; charset=UTF-8');
 
         <?php
         // Configuración de conexión
-        $host = 'localhost';
+        $host = '192.168.1.87';
         $dbname = 'smart_pill';
         $username = 'root';
         $password = '';

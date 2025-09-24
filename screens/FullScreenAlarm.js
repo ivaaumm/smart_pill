@@ -16,9 +16,10 @@ import {
 import { MaterialIcons, Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { playSoundPreview, stopCurrentSound } from '../utils/audioUtils';
-import { registrarToma, actualizarEstadoToma, formatearDatosParaRegistro, manejarErrorAPI, obtenerRegistroId } from '../utils/medicationLogAPI';
+import { registrarToma, actualizarEstadoToma, formatearDatosParaRegistro, manejarErrorAPI, obtenerRegistroId, crearRegistroPorInteraccion } from '../utils/medicationLogAPI';
 import { scheduleSnoozeNotification } from '../utils/audioUtils';
 import { useUser } from '../UserContextProvider';
+import { DeviceEventEmitter } from 'react-native';
 // Notificaciones removidas - solo pantalla directa
 
 const { width, height } = Dimensions.get('window');
@@ -129,94 +130,84 @@ const FullScreenAlarm = ({ route, navigation }) => {
     ).start();
   };
 
-  // Nueva función para obtener registro_id cuando no esté disponible
-  const obtenerRegistroId = async (programacionId, usuarioId) => {
-    try {
-      console.log('🔍 Obteniendo registro_id para programacion_id:', programacionId, 'usuario_id:', usuarioId);
-      
-      const response = await fetch('http://localhost/smart_pill/obtener_registro_pendiente.php', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          programacion_id: programacionId,
-          usuario_id: usuarioId
-        })
-      });
 
-      const data = await response.json();
+
+  // Función unificada para manejar acciones de alarma
+  const handleAlarmAction = async (estado, observaciones = '') => {
+    try {
+      console.log('🔔 handleAlarmAction iniciado');
+      console.log('📋 notificationData completo:', JSON.stringify(notificationData, null, 2));
+      console.log('👤 user completo:', JSON.stringify(user, null, 2));
       
-      if (data.success && data.registro_id) {
-        console.log('✅ registro_id obtenido exitosamente:', data.registro_id);
-        return data.registro_id;
-      } else {
-        console.error('❌ No se pudo obtener registro_id:', data.message);
-        throw new Error(data.message || 'No se encontró registro pendiente');
+      // Debug de programacionId específicamente
+      console.log('🔍 notificationData.programacionId:', notificationData?.programacionId);
+      console.log('🔍 notificationData.programacion_id:', notificationData?.programacion_id);
+      console.log('🔍 notificationData.id:', notificationData?.id);
+      
+      // Debug de usuario_id específicamente  
+      console.log('🔍 notificationData.usuario_id:', notificationData?.usuario_id);
+      console.log('🔍 user.usuario_id:', user?.usuario_id);
+      
+      const programacion_id = notificationData?.programacion_id || notificationData?.programacionId || notificationData?.id;
+      const usuario_id = notificationData?.usuario_id || user?.usuario_id || 1;
+      
+      console.log('📊 Parámetros extraídos:');
+      console.log('  - programacion_id:', programacion_id);
+      console.log('  - usuario_id:', usuario_id);
+      console.log('  - estado:', estado);
+      
+      // Validar parámetros requeridos
+      if (!programacion_id) {
+        console.error('❌ programacion_id es null/undefined');
+        console.error('❌ programacion_id no encontrado en notificationData');
+        throw manejarErrorAPI(new Error('ID de programación no encontrado'));
       }
-    } catch (error) {
-      console.error('❌ Error al obtener registro_id:', error);
-      throw error;
-    }
-  };
+      
+      if (!usuario_id) {
+        console.error('❌ usuario_id es null/undefined');
+        throw manejarErrorAPI(new Error('ID de usuario no encontrado'));
+      }
+      
+      if (!estado) {
+        console.error('❌ estado es null/undefined');
+        throw manejarErrorAPI(new Error('Estado no especificado'));
+      }
 
-  // Función auxiliar para manejar acciones de alarma con registro_id
-  const handleAlarmAction = async (action, observaciones) => {
-    try {
-      await stopCurrentSound();
-      setIsPlaying(false);
+      const interactionData = {
+        programacion_id: programacion_id,
+        usuario_id: usuario_id,
+        estado: estado,
+        observaciones: observaciones || `Acción desde alarma: ${estado}`
+      };
+
+      console.log('📤 Datos de interacción a enviar:', interactionData);
+
+      const result = await crearRegistroPorInteraccion(interactionData);
       
-      // Debug: Verificar qué datos tenemos
-      console.log('🔍 DEBUG - notificationData completo:', JSON.stringify(notificationData, null, 2));
-      console.log('🔍 DEBUG - registro_id disponible:', notificationData?.registro_id);
-      
-      let registroId = notificationData?.registro_id;
-      
-      // Si no tenemos registro_id, intentar obtenerlo usando programacionId
-      if (!registroId && notificationData?.programacionId && notificationData?.usuario_id) {
-        console.log('🔄 registro_id no disponible, obteniendo desde el servidor...');
-        try {
-          registroId = await obtenerRegistroId(notificationData.programacionId, notificationData.usuario_id);
-          console.log('✅ registro_id obtenido:', registroId);
-        } catch (error) {
-          console.error('❌ Error al obtener registro_id:', error);
-          Alert.alert(
-            'Error', 
-            `No se puede ${action} el medicamento: ${error.message}. Por favor, registra manualmente desde la pantalla principal.`,
-            [{ text: 'OK', onPress: () => navigation.goBack() }]
-          );
-          return;
+      if (result.success) {
+        // Emitir evento de cambio de estado para actualización automática
+        DeviceEventEmitter.emit('medicationStateChanged', {
+          programacionId: programacion_id,
+          nuevoEstado: estado,
+          timestamp: Date.now(),
+          source: 'FullScreenAlarm'
+        });
+        
+        console.log('✅ Registro creado exitosamente desde alarma');
+        
+        // Actualizar el estado local si es necesario
+        if (setNotificationData) {
+          setNotificationData(prev => ({
+            ...prev,
+            estado: estado
+          }));
         }
       }
       
-      if (!registroId) {
-        console.error('❌ ERROR: No se encontró registro_id después de todos los intentos');
-        Alert.alert(
-          'Error', 
-          'No se puede actualizar el registro: falta información necesaria. Por favor, registra manualmente desde la pantalla principal.',
-          [{ text: 'OK', onPress: () => navigation.goBack() }]
-        );
-        return;
-      }
-      
-      // Actualizar el estado del registro
-      const updateData = {
-        registro_id: registroId,
-        nuevo_estado: action,
-        observaciones: observaciones
-      };
-      
-      console.log(`📝 Actualizando estado de ${action} en la base de datos:`, updateData);
-      
-      const resultado = await actualizarEstadoToma(updateData);
-      
-      console.log(`✅ ${action} registrado exitosamente:`, resultado);
-      
-      return resultado;
+      return result;
     } catch (error) {
-      console.error(`Error al registrar ${action}:`, error);
-      const mensajeError = manejarErrorAPI(error);
-      throw new Error(mensajeError);
+      console.error('❌ Error en handleAlarmAction:', error);
+      throw error;
     }
   };
 

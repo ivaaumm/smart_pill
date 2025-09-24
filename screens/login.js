@@ -105,7 +105,7 @@ export default function Login(props) {
       }}
     >
       <Image
-        source={require("../assets/icons/S M A R T P I L L.png")}
+        source={require("../assets/icons/smartpill.png")}
         style={{ width: 260, height: 260, marginBottom: 0 }}
       />
       <View style={[styles.tarjeta, { marginTop: -80, marginBottom: 60 }]}>

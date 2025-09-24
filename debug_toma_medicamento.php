@@ -74,7 +74,7 @@ try {
     echo "<div class='section info'><h2>🔄 Prueba de Actualización de Estado</h2>";
     
     // Buscar un registro pendiente para probar
-    $sql_test = "SELECT registro_id FROM registro_tomas WHERE estado = 'pendiente' LIMIT 1";
+    $sql_test = "SELECT registro_id FROM registro_tomas WHERE estado IN ('pospuesta', 'rechazada', 'omitida') LIMIT 1";
     $result_test = $conn->query($sql_test);
     
     if ($result_test && $result_test->num_rows > 0) {

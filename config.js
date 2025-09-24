@@ -86,9 +86,9 @@ export const getApiUrl = () => {
 
 // URLs de fallback para probar en caso de error
 const FALLBACK_URLS = [
+  'http://localhost/smart_pill/',
   'http://192.168.1.87/smart_pill/',
-  'http://10.0.2.2/smart_pill/',
-  'http://localhost/smart_pill/'
+  'http://10.0.2.2/smart_pill/'
 ];
 
 // Función para probar conectividad con diferentes URLs

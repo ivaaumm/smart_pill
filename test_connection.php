@@ -8,7 +8,7 @@ echo "<p><strong>Versión PHP:</strong> " . phpversion() . "</p>";
 echo "<p><strong>Extensión MySQLi:</strong> " . (extension_loaded('mysqli') ? '✅ Disponible' : '❌ No disponible') . "</p>";
 
 // Configuración de conexión
-$host = "localhost";
+$host = "192.168.1.87";
 $user = "root";
 $pass = "";
 $db = "smart_pill";

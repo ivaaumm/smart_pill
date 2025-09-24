@@ -93,7 +93,7 @@ export default function Register({ navigation }) {
     <View style={styles.padre}>
       <View style={{ flex: 1, justifyContent: "flex-end" }}>
         <Image
-          source={require("../assets/icons/S M A R T P I L L.png")}
+          source={require("../assets/icons/smartpill.png")}
           style={[styles.profile, { width: 260, height: 260 }]}
         />
       </View>

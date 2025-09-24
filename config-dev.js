@@ -32,7 +32,8 @@ export const getDevelopmentUrl = () => {
   console.log('📱 Usando IP específica para dispositivos físicos: 192.168.1.87');
   return DEV_CONFIG.IP_SPECIFIC;
   
-  // Si necesitas usar localhost para desarrollo local, descomenta:
+  // Para desarrollo local y dispositivos físicos, usar localhost
+  // console.log('💻 Usando localhost para desarrollo local');
   // return DEV_CONFIG.LOCALHOST;
 };
 

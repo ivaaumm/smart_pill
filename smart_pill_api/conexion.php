@@ -3,7 +3,7 @@
 // Configurar zona horaria de Argentina
 date_default_timezone_set('America/Argentina/Buenos_Aires');
 
-$host = "localhost";
+$host = "192.168.1.87";
 $user = "root";
 $pass = "";
 $db = "smart_pill";

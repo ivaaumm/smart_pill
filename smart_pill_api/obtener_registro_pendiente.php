@@ -1,13 +1,11 @@
 <?php
+header("Content-Type: application/json");
 header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: POST, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type");
-header("Content-Type: application/json; charset=UTF-8");
 
-// Manejar preflight OPTIONS request
-if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
-    http_response_code(200);
-    exit();
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    exit(0);
 }
 
 include "conexion.php";
@@ -39,76 +37,64 @@ $programacion_id = intval($input['programacion_id']);
 $usuario_id = isset($input['usuario_id']) ? intval($input['usuario_id']) : null;
 
 try {
-    // Buscar registro pendiente para la programación
+    // Buscar registros existentes para la programación (solo estados válidos: tomada, pospuesta, omitida)
     $sql = "SELECT registro_id, usuario_id, programacion_id, estado, fecha_programada, hora_programada, 
                    fecha_hora_accion, observaciones
             FROM registro_tomas 
-            WHERE programacion_id = ? ";
+            WHERE programacion_id = ? AND estado IN ('tomada', 'pospuesta', 'omitida')";
     
     $params = [$programacion_id];
     $types = "i";
     
     // Agregar filtro por usuario si se proporciona
-    if ($usuario_id) {
-        $sql .= " AND usuario_id = ? ";
+    if ($usuario_id !== null) {
+        $sql .= " AND usuario_id = ?";
         $params[] = $usuario_id;
         $types .= "i";
     }
     
-    // Priorizar registros pendientes de hoy, luego cualquier pendiente, luego el más reciente
-    $sql .= " ORDER BY 
-                CASE 
-                    WHEN estado = 'pendiente' AND fecha_programada = CURDATE() THEN 1
-                    WHEN estado = 'pendiente' THEN 2
-                    ELSE 3
-                END,
-                fecha_programada DESC, 
-                hora_programada DESC 
-              LIMIT 1";
+    // Ordenar por fecha más reciente
+    $sql .= " ORDER BY fecha_programada DESC, hora_programada DESC LIMIT 1";
     
     $stmt = $conn->prepare($sql);
     $stmt->bind_param($types, ...$params);
     $stmt->execute();
-    $resultado = $stmt->get_result();
+    $result = $stmt->get_result();
     
-    if ($resultado && $resultado->num_rows > 0) {
-        $registro = $resultado->fetch_assoc();
+    if ($result->num_rows > 0) {
+        $registro = $result->fetch_assoc();
         
         echo json_encode([
             "success" => true,
+            "registro_encontrado" => true,
             "registro_id" => intval($registro['registro_id']),
+            "usuario_id" => intval($registro['usuario_id']),
+            "programacion_id" => intval($registro['programacion_id']),
             "estado" => $registro['estado'],
             "fecha_programada" => $registro['fecha_programada'],
             "hora_programada" => $registro['hora_programada'],
-            "es_pendiente" => $registro['estado'] === 'pendiente',
-            "es_hoy" => $registro['fecha_programada'] === date('Y-m-d'),
-            "mensaje" => $registro['estado'] === 'pendiente' 
-                ? "Registro pendiente encontrado" 
-                : "Registro encontrado (ya procesado: {$registro['estado']})"
+            "fecha_hora_accion" => $registro['fecha_hora_accion'],
+            "observaciones" => $registro['observaciones'],
+            "es_pendiente" => false, // Ya no existen registros pendientes
+            "mensaje" => "Registro encontrado con estado: " . $registro['estado']
         ]);
-        
     } else {
-        // No se encontró ningún registro
+        // No hay registros para esta programación
         echo json_encode([
-            "success" => false,
-            "error" => "No se encontraron registros para programacion_id: $programacion_id",
+            "success" => true,
+            "registro_encontrado" => false,
             "registro_id" => null,
-            "sugerencia" => "Verificar que la programación tenga registros creados"
+            "es_pendiente" => false,
+            "message" => "No hay registros para esta programación. Los registros se crean automáticamente cuando interactúas con la alarma (tomar, posponer u omitir).",
+            "info" => "El sistema ya no mantiene registros pendientes. Los registros se generan únicamente al momento de la interacción del usuario."
         ]);
     }
-    
-    $stmt->close();
     
 } catch (Exception $e) {
     http_response_code(500);
     echo json_encode([
         "success" => false,
-        "error" => "Error del servidor: " . $e->getMessage(),
-        "debug_info" => [
-            "programacion_id" => $programacion_id,
-            "usuario_id" => $usuario_id,
-            "timestamp" => date('Y-m-d H:i:s')
-        ]
+        "error" => "Error del servidor: " . $e->getMessage()
     ]);
 }
 

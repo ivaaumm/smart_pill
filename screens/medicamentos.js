@@ -15,6 +15,7 @@ import {
   RefreshControl,
   Alert,
   Platform,
+  Dimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialIcons } from "@expo/vector-icons";
@@ -1019,15 +1020,6 @@ const Medicamentos = ({ navigation }) => {
 
       console.log("Horarios únicos para guardar:", horariosUnicos);
       console.log("Horarios para API:", horariosParaAPI);
-      console.log("🔍 Usuario actual:", user);
-      console.log("🔍 Usuario ID:", user?.usuario_id);
-
-      // Verificar que el usuario esté logueado
-      if (!user || !user.usuario_id) {
-        Alert.alert("Error", "No hay usuario logueado. Por favor, inicia sesión nuevamente.");
-        setLoading(false);
-        return;
-      }
 
       const dataToSend = {
         usuario_id: user.usuario_id,
@@ -2397,7 +2389,13 @@ const Medicamentos = ({ navigation }) => {
       <TouchableOpacity
         key={programacion.programacion_id}
         style={styles.programacionCard}
-        onPress={() => mostrarDetallesProgramacion(programacion)}
+        onPress={(e) => {
+          if (menuVisible === programacion.programacion_id) {
+            e.stopPropagation();
+            return;
+          }
+          mostrarDetallesProgramacion(programacion);
+        }}
         activeOpacity={0.7}
       >
         <View style={styles.programacionHeader}>
@@ -2437,7 +2435,25 @@ const Medicamentos = ({ navigation }) => {
               </Text>
             </View>
             <TouchableOpacity
-              onPress={() => setMenuVisible(programacion.programacion_id)}
+              onPress={(e) => {
+                e.stopPropagation();
+                // Calcular posición del menú para evitar que se corte
+                const { height: screenHeight } = Dimensions.get('window');
+                e.target.measure((x, y, width, height, pageX, pageY) => {
+                  const menuHeight = 120; // Altura aproximada del menú (3 items * 40px)
+                  
+                  // Posicionar el menú muy arriba, al nivel exacto del botón
+                  let menuY = pageY - 80; // Subir 80px para alineación exacta
+                  
+                  // Si el menú se saldría de la pantalla, posicionarlo arriba del botón
+                  if (menuY + menuHeight > screenHeight - 50) {
+                    menuY = pageY - menuHeight + height;
+                  }
+                  
+                  setMenuPosition({ x: pageX, y: menuY });
+                  setMenuVisible(programacion.programacion_id);
+                });
+              }}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               style={{ paddingLeft: 8 }}
             >
@@ -2446,48 +2462,8 @@ const Medicamentos = ({ navigation }) => {
           </View>
         </View>
         {menuVisible === programacion.programacion_id && (
-          <View style={styles.contextMenu}>
-            <TouchableOpacity
-              style={styles.contextMenuItem}
-              onPress={() => {
-                setMenuVisible(null);
-                editarProgramacion(programacion);
-              }}
-            >
-              <MaterialIcons name="edit" size={18} color="#7A2C34" />
-              <Text style={styles.contextMenuText}>Editar</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.contextMenuItem}
-              onPress={() => {
-                setMenuVisible(null);
-                const nuevoEstado =
-                  programacion.estado === "activo" ? "inactivo" : "activo";
-                cambiarEstadoProgramacion(
-                  programacion.programacion_id,
-                  nuevoEstado
-                );
-              }}
-            >
-              <MaterialIcons
-                name="pause-circle-outline"
-                size={18}
-                color="#7A2C34"
-              />
-              <Text style={styles.contextMenuText}>
-                {programacion.estado === "activo" ? "Desactivar" : "Activar"}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.contextMenuItem}
-              onPress={() => {
-                setMenuVisible(null);
-                confirmarEliminarProgramacion(programacion);
-              }}
-            >
-              <MaterialIcons name="delete" size={18} color="#7A2C34" />
-              <Text style={styles.contextMenuText}>Eliminar</Text>
-            </TouchableOpacity>
+          <View style={styles.menuPlaceholder}>
+            {/* El menú ahora se renderiza globalmente */}
           </View>
         )}
       </TouchableOpacity>
@@ -3487,25 +3463,26 @@ const Medicamentos = ({ navigation }) => {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={["bottom", "left", "right"]}>
-      <StatusBar backgroundColor="#7A2C34" barStyle="light-content" />
+    <TouchableWithoutFeedback onPress={() => setMenuVisible(false)}>
+      <SafeAreaView style={styles.container} edges={["bottom", "left", "right"]}>
+        <StatusBar backgroundColor="#7A2C34" barStyle="light-content" />
 
-      {/* Contenido Principal */}
-      <ScrollView
-        style={styles.content}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => {
-              onRefresh();
-              cargarTomasHoy();
-            }}
-            colors={["#7A2C34"]}
-            tintColor="#7A2C34"
-          />
-        }
-      >
+        {/* Contenido Principal */}
+        <ScrollView
+          style={styles.content}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => {
+                onRefresh();
+                cargarTomasHoy();
+              }}
+              colors={["#7A2C34"]}
+              tintColor="#7A2C34"
+            />
+          }
+        >
         {/* Botón Programar Medicamento */}
         <TouchableOpacity
           style={styles.agregarButton}
@@ -3569,6 +3546,62 @@ const Medicamentos = ({ navigation }) => {
             </View>
           )}
         </View>
+        {/* Menú contextual global */}
+        {menuVisible && (
+          <View style={[styles.contextMenu, {
+            position: 'absolute',
+            top: menuPosition.y,
+            right: 10,
+            zIndex: 9999,
+            elevation: 9999,
+          }]}>
+            <TouchableOpacity
+              style={styles.contextMenuItem}
+              onPress={() => {
+                setMenuVisible(null);
+                const programacion = programaciones.find(p => p.programacion_id === menuVisible);
+                if (programacion) editarProgramacion(programacion);
+              }}
+            >
+              <MaterialIcons name="edit" size={18} color="#7A2C34" />
+              <Text style={styles.contextMenuText}>Editar</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.contextMenuItem}
+              onPress={() => {
+                setMenuVisible(null);
+                const programacion = programaciones.find(p => p.programacion_id === menuVisible);
+                if (programacion) {
+                  const nuevoEstado = programacion.estado === "activo" ? "inactivo" : "activo";
+                  cambiarEstadoProgramacion(programacion.programacion_id, nuevoEstado);
+                }
+              }}
+            >
+              <MaterialIcons
+                name="pause-circle-outline"
+                size={18}
+                color="#7A2C34"
+              />
+              <Text style={styles.contextMenuText}>
+                {(() => {
+                  const programacion = programaciones.find(p => p.programacion_id === menuVisible);
+                  return programacion?.estado === "activo" ? "Desactivar" : "Activar";
+                })()}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.contextMenuItem}
+              onPress={() => {
+                setMenuVisible(null);
+                const programacion = programaciones.find(p => p.programacion_id === menuVisible);
+                if (programacion) confirmarEliminarProgramacion(programacion);
+              }}
+            >
+              <MaterialIcons name="delete" size={18} color="#7A2C34" />
+              <Text style={styles.contextMenuText}>Eliminar</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </ScrollView>
 
       {/* Modal para programación de medicamentos */}
@@ -3864,7 +3897,8 @@ const Medicamentos = ({ navigation }) => {
 
       {/* Renderizar el modal de configuración de notificaciones */}
       {renderNotificationConfigModal()}
-    </SafeAreaView>
+      </SafeAreaView>
+    </TouchableWithoutFeedback>
   );
 };
 
@@ -6078,6 +6112,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
+    position: "relative",
   },
   programacionHeader: {
     flexDirection: "row",
@@ -6104,20 +6139,17 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   contextMenu: {
-    position: "absolute",
-    top: 44,
-    right: 10,
     backgroundColor: "#fff",
     borderRadius: 8,
     borderWidth: 1,
     borderColor: "#e9ecef",
-    elevation: 5,
+    elevation: 9999,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15,
     shadowRadius: 6,
     paddingVertical: 6,
-    zIndex: 20,
+    zIndex: 9999,
   },
   contextMenuItem: {
     flexDirection: "row",
@@ -6772,6 +6804,10 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
+  },
+  menuPlaceholder: {
+    height: 0,
+    width: 0,
   },
   disabledButton: {
     opacity: 0.5,

@@ -176,7 +176,7 @@ export const obtenerRegistroId = async (programacionId, usuarioId) => {
 
     const result = await response.json();
     
-    console.log('🔍 DEBUG - Respuesta obtener_registro_pendiente:', JSON.stringify(result, null, 2));
+    console.log('🔍 DEBUG - Respuesta obtener_registro_existente:', JSON.stringify(result, null, 2));
     
     if (!response.ok || !result.success) {
       throw new Error(result.error || 'Error al obtener registro_id');
@@ -210,4 +210,44 @@ export const manejarErrorAPI = (error) => {
   }
   
   return errorMessage || 'Error desconocido al procesar la solicitud.';
+};
+
+/**
+ * Crea un registro de medicamento solo cuando el usuario interactúa con la alarma
+ * @param {Object} interactionData - Datos de la interacción
+ * @param {number} interactionData.programacion_id - ID de la programación
+ * @param {number} interactionData.usuario_id - ID del usuario
+ * @param {string} interactionData.estado - Estado: 'tomada', 'pospuesta', 'rechazada'
+ * @param {string} interactionData.observaciones - Observaciones adicionales
+ * @returns {Promise<Object>} Respuesta del servidor
+ */
+export const crearRegistroPorInteraccion = async (interactionData) => {
+  try {
+    console.log('📝 Creando registro por interacción:', interactionData);
+    
+    const apiBaseUrl = await getApiBaseUrl();
+    const response = await fetch(`${apiBaseUrl}/crear_registro_interaccion.php`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(interactionData),
+    });
+
+    const result = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(result.message || 'Error en la respuesta del servidor');
+    }
+
+    if (!result.success) {
+      throw new Error(result.message || 'Error al crear el registro por interacción');
+    }
+
+    console.log('✅ Registro creado por interacción exitosamente:', result);
+    return result;
+  } catch (error) {
+    console.error('❌ Error al crear registro por interacción:', error);
+    throw error;
+  }
 };
