@@ -177,7 +177,7 @@ const FullScreenAlarm = ({ route, navigation }) => {
         programacion_id: programacion_id,
         usuario_id: usuario_id,
         estado: estado,
-        observaciones: observaciones || `Acción desde alarma: ${estado}`
+        observaciones: observaciones || ''
       };
 
       console.log('📤 Datos de interacción a enviar:', interactionData);
@@ -194,14 +194,6 @@ const FullScreenAlarm = ({ route, navigation }) => {
         });
         
         console.log('✅ Registro creado exitosamente desde alarma');
-        
-        // Actualizar el estado local si es necesario
-        if (setNotificationData) {
-          setNotificationData(prev => ({
-            ...prev,
-            estado: estado
-          }));
-        }
       }
       
       return result;
@@ -213,7 +205,7 @@ const FullScreenAlarm = ({ route, navigation }) => {
 
   const handleTaken = async () => {
     try {
-      await handleAlarmAction('tomada', 'Medicamento tomado desde la pantalla de alarma');
+      await handleAlarmAction('tomada', '');
       
       Alert.alert(
         '✅ Medicamento tomado',
@@ -232,7 +224,7 @@ const FullScreenAlarm = ({ route, navigation }) => {
 
   const handleSnooze = async () => {
     try {
-      await handleAlarmAction('pospuesta', 'Medicamento pospuesto desde la pantalla de alarma');
+      await handleAlarmAction('pospuesta', '');
       
       // Programar nueva notificación para 10 minutos después
       try {
@@ -283,7 +275,7 @@ const FullScreenAlarm = ({ route, navigation }) => {
           style: 'destructive',
           onPress: async () => {
             try {
-              await handleAlarmAction('rechazada', 'Medicamento omitido desde la pantalla de alarma');
+              await handleAlarmAction('rechazada', '');
               navigation.goBack();
             } catch (error) {
               Alert.alert(

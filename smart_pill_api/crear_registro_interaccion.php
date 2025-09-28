@@ -18,6 +18,7 @@ try {
     $usuario_id = $input['usuario_id'] ?? null;
     $estado = $input['estado'] ?? null; // 'tomada', 'pospuesta', 'rechazada'
     $observaciones = $input['observaciones'] ?? '';
+    $fecha_cliente = $input['fecha_cliente'] ?? null; // Fecha del cliente
     
     // Validar parámetros requeridos
     if (!$programacion_id || !$usuario_id || !$estado) {
@@ -40,11 +41,12 @@ try {
         exit;
     }
     
-    // Obtener información de la programación y horarios para HOY
-    $fecha_hoy = date('Y-m-d');
+    // Obtener información de la programación y horarios para la fecha especificada
+    $fecha_hoy = $fecha_cliente ? date('Y-m-d', strtotime($fecha_cliente)) : date('Y-m-d');
     $hora_actual = date('H:i:s');
     
-    // Traducir día actual al español
+    // Traducir día actual al español (usar la fecha del cliente si está disponible)
+    $fecha_para_dia = $fecha_cliente ? strtotime($fecha_cliente) : time();
     $dias_traduccion = [
         'Monday' => 'lunes',
         'Tuesday' => 'martes', 
@@ -55,7 +57,7 @@ try {
         'Sunday' => 'domingo'
     ];
     
-    $dia_actual_ingles = date('l');
+    $dia_actual_ingles = date('l', $fecha_para_dia);
     $dia_actual_espanol = $dias_traduccion[$dia_actual_ingles];
     
     // Buscar horarios para hoy
@@ -73,7 +75,7 @@ try {
         echo json_encode([
             "success" => false,
             "error" => "NO_SCHEDULE_TODAY",
-            "message" => "No hay horarios programados para hoy ($dia_actual_espanol) en esta programación"
+            "message" => "No hay horarios programados para la fecha $fecha_hoy ($dia_actual_espanol) en esta programación"
         ]);
         exit;
     }

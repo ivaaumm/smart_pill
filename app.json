@@ -10,7 +10,8 @@
     "assetBundlePatterns": [
       "assets/sounds/*",
       "assets/fonts/*",
-      "assets/images/*"
+      "assets/images/*",
+      "assets/icons/*"
     ],
     "plugins": [
       [

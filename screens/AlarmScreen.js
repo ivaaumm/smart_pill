@@ -137,7 +137,7 @@ const AlarmScreen = ({ route, navigation }) => {
       const updateData = {
         registro_id: registroId,
         nuevo_estado: 'tomada',
-        observaciones: 'Medicamento tomado desde la pantalla de alarma'
+        observaciones: ''
       };
       
       console.log('📝 Actualizando estado de toma en la base de datos:', updateData);
@@ -165,7 +165,7 @@ const AlarmScreen = ({ route, navigation }) => {
 
   const handleSnooze = async () => {
     try {
-      await handleAlarmAction('pospuesta', 'Medicamento pospuesto desde la pantalla de alarma');
+      await handleAlarmAction('pospuesta', '');
       
       Alert.alert(
         'Recordatorio pospuesto',
@@ -207,7 +207,7 @@ const AlarmScreen = ({ route, navigation }) => {
           style: 'destructive',
           onPress: async () => {
             try {
-              await handleAlarmAction('rechazada', 'Medicamento omitido desde la pantalla de alarma');
+              await handleAlarmAction('rechazada', '');
               navigation.goBack();
             } catch (error) {
               console.error('Error al registrar omitir:', error);
@@ -324,7 +324,7 @@ const AlarmScreen = ({ route, navigation }) => {
         programacion_id: programacion_id,
         usuario_id: usuario_id,
         estado: estado,
-        observaciones: observaciones || `Acción desde alarma: ${estado}`
+        observaciones: observaciones || ''
       };
 
       console.log('📤 Datos de interacción a enviar:', interactionData);
@@ -341,14 +341,6 @@ const AlarmScreen = ({ route, navigation }) => {
         });
         
         console.log('✅ Registro creado exitosamente desde alarma');
-        
-        // Actualizar el estado local si es necesario
-        if (setNotificationData) {
-          setNotificationData(prev => ({
-            ...prev,
-            estado: estado
-          }));
-        }
       }
       
       return result;

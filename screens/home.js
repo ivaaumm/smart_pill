@@ -95,8 +95,17 @@ export default function Home() {
   }, [user?.usuario_id]);
 
   const formatearFecha = (fecha) => {
-    const date = new Date(fecha);
-    return date.toLocaleDateString("es-ES", {
+    // Crear la fecha de forma que respete la zona horaria local
+    // Si la fecha viene en formato YYYY-MM-DD, la parseamos correctamente
+    let fechaObj;
+    if (typeof fecha === 'string' && fecha.includes('-')) {
+      const [year, month, day] = fecha.split('-');
+      fechaObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+    } else {
+      fechaObj = new Date(fecha);
+    }
+    
+    return fechaObj.toLocaleDateString("es-ES", {
       day: "2-digit",
       month: "2-digit",
       year: "numeric",

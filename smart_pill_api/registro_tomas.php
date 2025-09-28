@@ -218,81 +218,31 @@ function actualizarEstadoToma($conn) {
     
     $registro_actual = $res_actual->fetch_assoc();
     
-    // Si el estado actual es 'pospuesta' y se cambia a 'tomada' o 'rechazada'
-    // crear un nuevo registro como cambio de estado
-    if ($registro_actual['estado'] === 'pospuesta' && in_array($nuevo_estado, ['tomada', 'rechazada'])) {
-        $conn->begin_transaction();
-        
-        try {
-            // Crear nuevo registro como cambio de estado
-            $fecha_hora_accion = date('Y-m-d H:i:s');
-            
-            $sql_nuevo = "INSERT INTO registro_tomas (
-                            usuario_id, horario_id, remedio_global_id, programacion_id,
-                            fecha_programada, hora_programada, fecha_hora_accion, estado,
-                            estado_anterior, dosis_programada, observaciones, es_cambio_estado,
-                            registro_original_id
-                          ) VALUES (
-                            {$registro_actual['usuario_id']}, {$registro_actual['horario_id']}, 
-                            {$registro_actual['remedio_global_id']}, {$registro_actual['programacion_id']},
-                            '{$registro_actual['fecha_programada']}', '{$registro_actual['hora_programada']}', 
-                            '$fecha_hora_accion', '$nuevo_estado', 'pospuesta',
-                            '{$registro_actual['dosis_programada']}', '$observaciones', 1, $registro_id
-                          )";
-            
-            if (!$conn->query($sql_nuevo)) {
-                throw new Exception("Error al crear registro de cambio: " . $conn->error);
-            }
-            
-            $nuevo_registro_id = $conn->insert_id;
-            
-            // Si se tomó el medicamento, actualizar inventario
-            if ($nuevo_estado === 'tomada') {
-                actualizarInventario($conn, $registro_actual['usuario_id'], $registro_actual['remedio_global_id'], 1);
-            }
-            
-            $conn->commit();
-            
-            echo json_encode([
-                "success" => true,
-                "message" => "Estado actualizado exitosamente",
-                "registro_original_id" => $registro_id,
-                "nuevo_registro_id" => $nuevo_registro_id,
-                "estado_anterior" => 'pospuesta',
-                "estado_nuevo" => $nuevo_estado
-            ]);
-            
-        } catch (Exception $e) {
-            $conn->rollback();
-            throw $e;
-        }
-    } else {
-        // Actualización simple del estado actual
-        $fecha_hora_accion = date('Y-m-d H:i:s');
-        
-        $sql_update = "UPDATE registro_tomas SET 
-                        estado = '$nuevo_estado',
-                        fecha_hora_accion = '$fecha_hora_accion',
-                        observaciones = '$observaciones'
-                      WHERE registro_id = $registro_id";
-        
-        if (!$conn->query($sql_update)) {
-            throw new Exception("Error al actualizar registro: " . $conn->error);
-        }
-        
-        // Si se tomó el medicamento, actualizar inventario
-        if ($nuevo_estado === 'tomada' && $registro_actual['estado'] !== 'tomada') {
-            actualizarInventario($conn, $registro_actual['usuario_id'], $registro_actual['remedio_global_id'], 1);
-        }
-        
-        echo json_encode([
-            "success" => true,
-            "message" => "Estado actualizado exitosamente",
-            "registro_id" => $registro_id,
-            "estado_anterior" => $registro_actual['estado'],
-            "estado_nuevo" => $nuevo_estado
-        ]);
+    // Actualización simple del estado actual (sin crear registros duplicados)
+    $fecha_hora_accion = date('Y-m-d H:i:s');
+    
+    $sql_update = "UPDATE registro_tomas SET 
+                    estado = '$nuevo_estado',
+                    fecha_hora_accion = '$fecha_hora_accion',
+                    observaciones = '$observaciones'
+                  WHERE registro_id = $registro_id";
+    
+    if (!$conn->query($sql_update)) {
+        throw new Exception("Error al actualizar registro: " . $conn->error);
     }
+    
+    // Si se tomó el medicamento, actualizar inventario
+    if ($nuevo_estado === 'tomada' && $registro_actual['estado'] !== 'tomada') {
+        actualizarInventario($conn, $registro_actual['usuario_id'], $registro_actual['remedio_global_id'], 1);
+    }
+    
+    echo json_encode([
+        "success" => true,
+        "message" => "Estado actualizado exitosamente",
+        "registro_id" => $registro_id,
+        "estado_anterior" => $registro_actual['estado'],
+        "estado_nuevo" => $nuevo_estado
+    ]);
 }
 
 // Función auxiliar para actualizar inventario

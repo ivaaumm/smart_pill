@@ -225,13 +225,21 @@ export const crearRegistroPorInteraccion = async (interactionData) => {
   try {
     console.log('📝 Creando registro por interacción:', interactionData);
     
+    // Agregar la fecha actual del cliente
+    const dataWithClientDate = {
+      ...interactionData,
+      fecha_cliente: new Date().toISOString()
+    };
+    
+    console.log('📅 Datos con fecha del cliente:', dataWithClientDate);
+    
     const apiBaseUrl = await getApiBaseUrl();
     const response = await fetch(`${apiBaseUrl}/crear_registro_interaccion.php`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(interactionData),
+      body: JSON.stringify(dataWithClientDate),
     });
 
     const result = await response.json();

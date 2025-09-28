@@ -46,7 +46,7 @@ try {
         ':vibrar' => $data['vibrar'] ?? 1
     ]);
     
-    if ($result && $stmt->rowCount() > 0) {
+    if ($result) {
         echo json_encode([
             'success' => true,
             'message' => 'Alarma actualizada correctamente'

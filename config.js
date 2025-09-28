@@ -20,6 +20,9 @@ const config = {
   },
 };
 
+// Exportar API_URL directamente para compatibilidad
+export const API_URL = config[ENV].API_URL;
+
 // Configuración para React Native
 export const API_CONFIG = {
   // URL base de la API

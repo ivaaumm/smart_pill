@@ -1757,13 +1757,13 @@ const Medicamentos = ({ navigation }) => {
         key: "sabado",
         label: "Sáb",
         fullLabel: "Sábado",
-        icon: "calendar-today",
+        icon: "event-note",
       },
       {
         key: "domingo",
         label: "Dom",
         fullLabel: "Domingo",
-        icon: "calendar-today",
+        icon: "event-note",
       },
     ];
 
@@ -1795,14 +1795,16 @@ const Medicamentos = ({ navigation }) => {
           </Text>
 
           <View style={styles.diasGrid}>
-            {diasSemana.map((dia) => {
+            {diasSemana.map((dia, index) => {
               const isSelected = diasSeleccionados.includes(dia.key);
+              const isDomingo = dia.key === 'domingo';
               return (
                 <TouchableOpacity
                   key={dia.key}
                   style={[
                     styles.diaCard,
                     isSelected ? styles.diaCardSelected : null,
+                    isDomingo ? styles.diaCardCentrado : null,
                   ]}
                   onPress={() => toggleDia(dia.key)}
                   activeOpacity={0.7}
@@ -2002,121 +2004,102 @@ const Medicamentos = ({ navigation }) => {
         <View style={styles.stepHeader}>
           <Text style={styles.stepTitle}>Configuración de notificaciones</Text>
           <Text style={styles.stepSubtitle}>
-            Configura las alarmas para cada horario programado
+            Configura las alarmas que se aplicarán a todos los horarios
           </Text>
         </View>
 
         <View style={styles.alarmConfigContainer}>
-
-          <View style={styles.alarmsContainer}>
-            {programacionData.horarios && programacionData.horarios.length > 0 ? (
-              programacionData.horarios.map((horario, index) => {
-                const alarm = alarms[index] || {
-                  id: null,
-                  time: new Date(`2000-01-01T${horario.hora}`),
-                  enabled: true,
-                  sound: "default",
-                  vibrate: true,
-                  volume: 100, // Aumentado para mayor volumen
-                  name: `Alarma ${index + 1}`,
-                };
-
-                return (
-                  <View
-                    key={index}
-                    style={[
-                      styles.alarmItem,
-                      !alarm.enabled && styles.alarmItemDisabled,
-                    ]}
-                  >
-                    <TouchableOpacity
-                      style={styles.alarmContent}
-                      onPress={() => showSoundPicker(index)}
-                      activeOpacity={0.7}
-                    >
-                      <View style={styles.alarmTimeContainer}>
-                        <View style={styles.alarmTimeRow}>
-                          <Text style={styles.alarmTime}>
-                            {new Date(
-                              `2000-01-01T${horario.hora}`
-                            ).toLocaleTimeString([], {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </Text>
-                          <View style={styles.soundIndicator}>
-                            <MaterialIcons
-                              name={
-                                alarm.sound === "alarm"
-                                  ? "alarm"
-                                  : alarm.sound === "tone"
-                                  ? "music-note"
-                                  : "notifications-none"
-                              }
-                              size={16}
-                              color={alarm.enabled ? "#7A2C34" : "#999"}
-                            />
-                          </View>
-                        </View>
-                        <Text style={styles.alarmDias}>
-                          {programacionData.dias_seleccionados
-                            ? programacionData.dias_seleccionados
-                                .map(
-                                  (dia) =>
-                                    [
-                                      "Dom",
-                                      "Lun",
-                                      "Mar",
-                                      "Mié",
-                                      "Jue",
-                                      "Vie",
-                                      "Sáb",
-                                    ][dia]
-                                )
-                                .join(", ")
-                            : ""}
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-
-                    <Switch
-                      value={alarm.enabled}
-                      onValueChange={(value) => {
-                        const newAlarms = [...alarms];
-                        if (!newAlarms[index]) {
-                          newAlarms[index] = {
-                            ...alarm,
-                            enabled: value,
-                            time: new Date(`2000-01-01T${horario.hora}`),
-                            days: programacionData.dias_seleccionados || [],
-                          };
-                        } else {
-                          newAlarms[index].enabled = value;
-                        }
-                        setAlarms(newAlarms);
-                        handleAlarmsChange(newAlarms);
-                      }}
-                      trackColor={{ false: "#E0E0E0", true: "#7A2C34" }}
-                      thumbColor="white"
-                    />
-                  </View>
-                );
-              })
-            ) : (
-              <View style={styles.noAlarmsContainer}>
+          <View style={styles.generalAlarmContainer}>
+            {/* Activar/Desactivar alarmas */}
+            <View style={styles.generalAlarmItem}>
+              <View style={styles.generalAlarmContent}>
                 <MaterialIcons
-                  name="notifications-off"
-                  size={48}
-                  color="rgba(122, 44, 52, 0.5)"
+                  name={generalAlarmEnabled ? "notifications-active" : "notifications-off"}
+                  size={24}
+                  color={generalAlarmEnabled ? "#7A2C34" : "#999"}
                 />
-                <Text style={styles.noAlarmsText}>
-                  No hay horarios configurados
-                </Text>
-                <Text style={styles.noAlarmsSubtext}>
-                  Vuelve al paso anterior para configurar los horarios
-                </Text>
+                <View style={styles.generalAlarmText}>
+                  <Text style={styles.generalAlarmTitle}>
+                    {generalAlarmEnabled ? "Alarmas activadas" : "Alarmas desactivadas"}
+                  </Text>
+                  <Text style={styles.generalAlarmSubtitle}>
+                    {generalAlarmEnabled 
+                      ? "Se reproducirán alarmas en todos los horarios programados"
+                      : "No se reproducirán alarmas"
+                    }
+                  </Text>
+                </View>
               </View>
+              <Switch
+                value={generalAlarmEnabled}
+                onValueChange={(value) => {
+                  setGeneralAlarmEnabled(value);
+                  // Aplicar a todas las alarmas existentes
+                  const newAlarms = alarms.map(alarm => ({
+                    ...alarm,
+                    enabled: value
+                  }));
+                  setAlarms(newAlarms);
+                  handleAlarmsChange(newAlarms);
+                }}
+                trackColor={{ false: "#E0E0E0", true: "#7A2C34" }}
+                thumbColor="white"
+              />
+            </View>
+
+            {/* Selección de tono */}
+            {generalAlarmEnabled && (
+              <TouchableOpacity
+                style={styles.generalAlarmItem}
+                onPress={() => {
+                  // Mostrar selector de sonido general
+                  showSoundPicker(0); // Usar el primer índice como referencia
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={styles.generalAlarmContent}>
+                  <MaterialIcons
+                    name={
+                      generalSound === "alarm"
+                        ? "alarm"
+                        : generalSound === "tone"
+                        ? "music-note"
+                        : "notifications"
+                    }
+                    size={24}
+                    color="#7A2C34"
+                  />
+                  <View style={styles.generalAlarmText}>
+                    <Text style={styles.generalAlarmTitle}>Tono de alarma</Text>
+                    <Text style={styles.generalAlarmSubtitle}>
+                      {generalSound === "alarm"
+                        ? "Sonido de alarma"
+                        : generalSound === "tone"
+                        ? "Tono musical"
+                        : "Sonido predeterminado"
+                      }
+                    </Text>
+                  </View>
+                </View>
+                <MaterialIcons
+                  name="chevron-right"
+                  size={24}
+                  color="#999"
+                />
+              </TouchableOpacity>
             )}
+
+            {/* Información adicional */}
+            <View style={styles.alarmInfoContainer}>
+              <MaterialIcons
+                name="info-outline"
+                size={20}
+                color="rgba(122, 44, 52, 0.7)"
+              />
+              <Text style={styles.alarmInfoText}>
+                Esta configuración se aplicará automáticamente a todas las alarmas de tu tratamiento.
+              </Text>
+            </View>
           </View>
         </View>
       </View>
@@ -2515,8 +2498,18 @@ const Medicamentos = ({ navigation }) => {
     // Funciones auxiliares
     const formatearFecha = (fecha) => {
       if (!fecha) return "";
-      const date = new Date(fecha);
-      return date.toLocaleDateString("es-ES", {
+      
+      // Crear la fecha de forma que respete la zona horaria local
+      // Si la fecha viene en formato YYYY-MM-DD, la parseamos correctamente
+      let fechaObj;
+      if (typeof fecha === 'string' && fecha.includes('-')) {
+        const [year, month, day] = fecha.split('-');
+        fechaObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+      } else {
+        fechaObj = new Date(fecha);
+      }
+      
+      return fechaObj.toLocaleDateString("es-ES", {
         day: "2-digit",
         month: "2-digit",
         year: "numeric",
@@ -2786,7 +2779,8 @@ const Medicamentos = ({ navigation }) => {
                   {pastillaDetalles?.nombre_comercial || pastillaDetalles?.nombre || "Medicamento"}
                 </Text>
                 
-                {pastillaDetalles?.nombre && pastillaDetalles?.nombre_comercial && (
+                {pastillaDetalles?.nombre && pastillaDetalles?.nombre_comercial && 
+                 pastillaDetalles.nombre !== pastillaDetalles.nombre_comercial && (
                   <Text style={{
                     fontSize: 16,
                     color: '#7f8c8d',
@@ -2804,7 +2798,7 @@ const Medicamentos = ({ navigation }) => {
                     fontWeight: 'bold',
                     color: '#34495e',
                     marginBottom: 5
-                  }}>📋 Descripción:</Text>
+                  }}>Descripción:</Text>
                   <Text style={{
                     fontSize: 14,
                     color: '#2c3e50',
@@ -2821,7 +2815,7 @@ const Medicamentos = ({ navigation }) => {
                     fontWeight: 'bold',
                     color: '#34495e',
                     marginBottom: 5
-                  }}>📦 Presentación:</Text>
+                  }}>Presentación:</Text>
                   <Text style={{
                     fontSize: 14,
                     color: '#2c3e50'
@@ -2837,7 +2831,7 @@ const Medicamentos = ({ navigation }) => {
                     fontWeight: 'bold',
                     color: '#34495e',
                     marginBottom: 5
-                  }}>⚖️ Peso por Unidad:</Text>
+                  }}>Peso por Unidad:</Text>
                   <Text style={{
                     fontSize: 14,
                     color: '#2c3e50'
@@ -2853,29 +2847,13 @@ const Medicamentos = ({ navigation }) => {
                     fontWeight: 'bold',
                     color: '#e74c3c',
                     marginBottom: 5
-                  }}>⚠️ Efectos Secundarios:</Text>
+                  }}>Efectos Secundarios:</Text>
                   <Text style={{
                     fontSize: 14,
                     color: '#2c3e50',
                     lineHeight: 20
                   }}>
                     {pastillaDetalles?.efectos_secundarios || "No especificados"}
-                  </Text>
-                </View>
-
-                {/* ID para debug */}
-                <View style={{
-                  backgroundColor: '#ecf0f1',
-                  padding: 10,
-                  borderRadius: 8,
-                  marginTop: 10
-                }}>
-                  <Text style={{
-                    fontSize: 12,
-                    color: '#7f8c8d',
-                    textAlign: 'center'
-                  }}>
-                    ID: {pastillaDetalles?.remedio_global_id || pastillaDetalles?.id || pastillaDetalles?.pastilla_id || "No disponible"}
                   </Text>
                 </View>
               </View>
@@ -2909,6 +2887,10 @@ const Medicamentos = ({ navigation }) => {
   const [selectedSound, setSelectedSound] = useState("default");
   const [isPlaying, setIsPlaying] = useState(false);
   const [soundPreviewTimeout, setSoundPreviewTimeout] = useState(null);
+  
+  // Estados para configuración general de alarmas
+  const [generalAlarmEnabled, setGeneralAlarmEnabled] = useState(true);
+  const [generalSound, setGeneralSound] = useState("default");
 
   // Estado para el modal de configuración de notificaciones
   const [notificationConfigModalVisible, setNotificationConfigModalVisible] =
@@ -5159,6 +5141,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     elevation: 4,
   },
+  diaCardCentrado: {
+    alignSelf: "center",
+    marginLeft: "auto",
+    marginRight: "auto",
+  },
   diaCardText: {
     fontSize: 16,
     fontWeight: "bold",
@@ -5934,6 +5921,64 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     width: '100%',
     maxWidth: 500,
+  },
+  generalAlarmContainer: {
+    padding: 20,
+  },
+  generalAlarmItem: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    marginBottom: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderWidth: 1,
+    borderColor: "#F1F5F9",
+    overflow: "hidden",
+    shadowColor: "rgba(0,0,0,0.05)",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 1,
+    shadowRadius: 6,
+    elevation: 2,
+    padding: 18,
+  },
+  generalAlarmContent: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  generalAlarmText: {
+    flex: 1,
+    marginLeft: 16,
+  },
+  generalAlarmTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#1E293B",
+    marginBottom: 4,
+    fontFamily: 'System',
+  },
+  generalAlarmSubtitle: {
+    fontSize: 14,
+    color: "#64748B",
+    lineHeight: 20,
+    fontFamily: 'System',
+  },
+  alarmInfoContainer: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    backgroundColor: "rgba(122, 44, 52, 0.05)",
+    padding: 16,
+    borderRadius: 12,
+    marginTop: 8,
+  },
+  alarmInfoText: {
+    flex: 1,
+    fontSize: 14,
+    color: "rgba(122, 44, 52, 0.8)",
+    lineHeight: 20,
+    marginLeft: 12,
+    fontFamily: 'System',
   },
   alarmConfigButton: {
     flexDirection: 'row',

@@ -11,26 +11,30 @@ import {
   ScrollView,
   DeviceEventEmitter,
   Modal,
-  TextInput
+  TextInput,
+  Platform
 } from 'react-native';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useUser } from '../UserContextProvider';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Picker } from '@react-native-picker/picker';
+import { API_URL } from '../config';
 
 const RegistroTomas = () => {
-  const navigation = useNavigation();
   const { user } = useUser();
+  const navigation = useNavigation();
+  
+  // Estados principales
   const [registros, setRegistros] = useState([]);
   const [registrosFiltrados, setRegistrosFiltrados] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
-  const intervalRef = useRef(null);
-  const lastUpdateRef = useRef(Date.now());
-
+  
   // Estados para filtros
   const [filtroEstado, setFiltroEstado] = useState('todos');
   const [filtroTiempo, setFiltroTiempo] = useState('todos');
@@ -42,6 +46,18 @@ const RegistroTomas = () => {
   const [showDatePickerHasta, setShowDatePickerHasta] = useState(false);
   const [medicamentosDisponibles, setMedicamentosDisponibles] = useState([]);
   const [tratamientosDisponibles, setTratamientosDisponibles] = useState([]);
+  
+  // Estados para el modal de observaciones
+  const [modalObservacionesVisible, setModalObservacionesVisible] = useState(false);
+  const [registroSeleccionado, setRegistroSeleccionado] = useState(null);
+  const [observacionTexto, setObservacionTexto] = useState('');
+  const [guardandoObservacion, setGuardandoObservacion] = useState(false);
+  const [alturaObservacion, setAlturaObservacion] = useState(100);
+  
+  // Estados para auto-refresh
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
+  const intervalRef = useRef(null);
+  const lastUpdateRef = useRef(Date.now());
 
   // Configuración de actualización automática
   const AUTO_REFRESH_INTERVAL = 30000; // 30 segundos
@@ -181,6 +197,98 @@ const RegistroTomas = () => {
     setTratamientosDisponibles(extraerTratamientosUnicos(registros));
   }, [registros, filtroEstado, filtroTiempo, filtroTratamiento, filtroMedicamento, fechaDesde, fechaHasta]);
 
+  // Funciones para manejar observaciones
+  const abrirModalObservaciones = (registro) => {
+    setRegistroSeleccionado(registro);
+    setObservacionTexto(registro.observaciones || '');
+    setAlturaObservacion(100); // Resetear altura al abrir modal
+    setModalObservacionesVisible(true);
+  };
+
+  const cerrarModalObservaciones = () => {
+    setModalObservacionesVisible(false);
+    setRegistroSeleccionado(null);
+    setObservacionTexto('');
+    setAlturaObservacion(100); // Resetear altura al cerrar modal
+  };
+
+  const guardarObservacion = async () => {
+    if (!registroSeleccionado) return;
+
+    console.log('🔄 Iniciando guardarObservacion...');
+    console.log('📋 Datos a enviar:', {
+      registro_id: registroSeleccionado.registro_id,
+      observaciones: observacionTexto.trim(),
+      url: `${API_URL}/actualizar_observaciones.php`
+    });
+
+    setGuardandoObservacion(true);
+    try {
+      console.log('🌐 Realizando fetch a:', `${API_URL}/actualizar_observaciones.php`);
+      
+      const response = await fetch(`${API_URL}/actualizar_observaciones.php`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          registro_id: registroSeleccionado.registro_id,
+          observaciones: observacionTexto.trim()
+        }),
+      });
+
+      console.log('📡 Response status:', response.status);
+      console.log('📡 Response ok:', response.ok);
+      console.log('📡 Response headers:', response.headers);
+
+      if (!response.ok) {
+        console.error('❌ Response no OK. Status:', response.status);
+        const errorText = await response.text();
+        console.error('❌ Error response text:', errorText);
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+
+      const data = await response.json();
+      console.log('📦 Response data:', data);
+
+      if (data.success) {
+        console.log('✅ Observación guardada exitosamente');
+        
+        // Actualizar el registro local con el campo correcto
+        setRegistros(prevRegistros => 
+          prevRegistros.map(registro => 
+            registro.registro_id === registroSeleccionado.registro_id 
+              ? { ...registro, observaciones: observacionTexto.trim() }
+              : registro
+          )
+        );
+        
+        // Recargar datos del servidor para asegurar sincronización
+        await cargarRegistrosInterno();
+        
+        Alert.alert('Éxito', 'Observación guardada correctamente');
+        cerrarModalObservaciones();
+      } else {
+        console.error('❌ Error del servidor:', data.message || data.error);
+        Alert.alert('Error', data.message || data.error || 'No se pudo guardar la observación');
+      }
+    } catch (error) {
+      console.error('💥 Error completo al guardar observación:', error);
+      console.error('💥 Error name:', error.name);
+      console.error('💥 Error message:', error.message);
+      console.error('💥 Error stack:', error.stack);
+      
+      let errorMessage = 'Error de conexión al guardar la observación';
+      if (error.message) {
+        errorMessage += `: ${error.message}`;
+      }
+      
+      Alert.alert('Error', errorMessage);
+    } finally {
+      setGuardandoObservacion(false);
+      console.log('🏁 Finalizando guardarObservacion');
+    }
+  };
   const cargarRegistros = async () => {
     if (!user?.usuario_id) return;
     
@@ -204,53 +312,67 @@ const RegistroTomas = () => {
     }
   };
 
-  const cargarRegistrosInterno = async () => {
-    // Buscar desde hace 7 días hasta 7 días en el futuro para incluir registros programados
-    const fechaDesde = new Date();
-    fechaDesde.setDate(fechaDesde.getDate() - 7);
-    const fechaDesdeStr = fechaDesde.toISOString().split('T')[0];
-    
-    const fechaHasta = new Date();
-    fechaHasta.setDate(fechaHasta.getDate() + 7);
-    const fechaHastaStr = fechaHasta.toISOString().split('T')[0];
-    
-    const url = `http://192.168.1.87/smart_pill/smart_pill_api/registro_tomas.php?usuario_id=${user.usuario_id}&fecha_desde=${fechaDesdeStr}&fecha_hasta=${fechaHastaStr}`;
-    
-    console.log(`🔍 Cargando registros para usuario ${user.usuario_id}`);
-    console.log(`📅 Rango de fechas: ${fechaDesdeStr} hasta ${fechaHastaStr}`);
-    console.log(`🌐 URL completa: ${url}`);
-    
-    const response = await fetch(url);
-    
-    console.log(`📡 Status de respuesta: ${response.status}`);
-    
-    if (response.ok) {
-      const responseText = await response.text();
-      console.log(`📥 Respuesta cruda (primeros 500 chars):`, responseText.substring(0, 500));
+  const cargarRegistrosInterno = async (loading = true) => {
+    try {
+      console.log('🚀 [REGISTRO TOMAS] Iniciando carga de registros...');
+      console.log('👤 [REGISTRO TOMAS] Usuario actual:', user);
       
-      let data;
-      try {
-        data = JSON.parse(responseText);
-        console.log('📋 Respuesta parseada:', data);
-      } catch (parseError) {
-        console.error('❌ Error parseando JSON:', parseError);
-        console.error('❌ Respuesta que causó el error:', responseText);
-        if (loading) {
-          Alert.alert('Error', 'Error en el formato de respuesta del servidor');
-        }
+      if (!user || !user.usuario_id) {
+        console.log('❌ [REGISTRO TOMAS] No hay usuario logueado');
         return;
       }
+
+      if (loading) {
+        setIsLoading(true);
+      }
+
+      // Buscar desde hace 7 días hasta 7 días en el futuro para incluir registros programados
+      const fechaDesde = new Date();
+      fechaDesde.setDate(fechaDesde.getDate() - 7);
+      const fechaDesdeStr = fechaDesde.toISOString().split('T')[0];
       
-      // Corregir: usar data.registros en lugar de data directamente
-      if (data.success && Array.isArray(data.registros)) {
-        console.log(`✅ ${data.registros.length} registros encontrados`);
-        console.log('📋 Registros detallados:', data.registros.map(r => ({
-          id: r.registro_id,
-          medicamento: r.nombre_comercial,
-          fecha: r.fecha_programada,
-          hora: r.hora_programada,
-          estado: r.estado
-        })));
+      const fechaHasta = new Date();
+      fechaHasta.setDate(fechaHasta.getDate() + 7);
+      const fechaHastaStr = fechaHasta.toISOString().split('T')[0];
+      
+      const url = `${API_URL}/registro_tomas.php?usuario_id=${user.usuario_id}&fecha_desde=${fechaDesdeStr}&fecha_hasta=${fechaHastaStr}`;
+      
+      console.log(`🔍 [REGISTRO TOMAS] Cargando registros para usuario ${user.usuario_id}`);
+      console.log(`📅 [REGISTRO TOMAS] Rango de fechas: ${fechaDesdeStr} hasta ${fechaHastaStr}`);
+      console.log(`🌐 [REGISTRO TOMAS] URL completa: ${url}`);
+      console.log(`🔧 [REGISTRO TOMAS] API_URL configurada: ${API_URL}`);
+      
+      const response = await fetch(url);
+      
+      console.log(`📡 [REGISTRO TOMAS] Status de respuesta: ${response.status}`);
+      
+      if (response.ok) {
+        const responseText = await response.text();
+        console.log(`📥 [REGISTRO TOMAS] Respuesta cruda (primeros 500 chars):`, responseText.substring(0, 500));
+        
+        let data;
+        try {
+          data = JSON.parse(responseText);
+          console.log('📋 [REGISTRO TOMAS] Respuesta parseada:', data);
+        } catch (parseError) {
+          console.error('❌ [REGISTRO TOMAS] Error parseando JSON:', parseError);
+          console.error('❌ [REGISTRO TOMAS] Respuesta que causó el error:', responseText);
+          if (loading) {
+            Alert.alert('Error', 'Error en el formato de respuesta del servidor');
+          }
+          return;
+        }
+        
+        // Corregir: usar data.registros en lugar de data directamente
+        if (data.success && Array.isArray(data.registros)) {
+          console.log(`✅ [REGISTRO TOMAS] ${data.registros.length} registros encontrados`);
+          console.log('📋 [REGISTRO TOMAS] Registros detallados:', data.registros.map(r => ({
+            id: r.registro_id,
+            medicamento: r.nombre_comercial,
+            fecha: r.fecha_programada,
+            hora: r.hora_programada,
+            estado: r.estado
+          })));
         
         // Actualizar estado solo si hay cambios
         setRegistros(prevRegistros => {
@@ -258,28 +380,64 @@ const RegistroTomas = () => {
           const prevRegistrosStr = JSON.stringify(prevRegistros);
           
           if (newRegistrosStr !== prevRegistrosStr) {
-            console.log('🔄 Registros actualizados - hay cambios');
+            console.log('🔄 [REGISTRO TOMAS] Registros actualizados - hay cambios');
+            console.log('📊 [REGISTRO TOMAS] Estado anterior:', prevRegistros.length, 'registros');
+            console.log('📊 [REGISTRO TOMAS] Estado nuevo:', data.registros.length, 'registros');
+            
+            // Preservar observaciones locales que no están en el servidor
+            const registrosConObservacionesLocales = data.registros.map(registroServidor => {
+              const registroLocal = prevRegistros.find(r => r.registro_id === registroServidor.registro_id);
+              
+              // Si hay una observación local que no está en el servidor, preservarla
+              if (registroLocal && 
+                  registroLocal.observaciones && 
+                  registroLocal.observaciones.trim() !== '' &&
+                  (!registroServidor.observaciones || registroServidor.observaciones.trim() === '')) {
+                console.log(`🔄 [REGISTRO TOMAS] Preservando observación local para registro ${registroServidor.registro_id}:`, registroLocal.observaciones);
+                return {
+                  ...registroServidor,
+                  observaciones: registroLocal.observaciones
+                };
+              }
+              
+              return registroServidor;
+            });
+            
             lastUpdateRef.current = Date.now();
-            return data.registros;
+            return registrosConObservacionesLocales;
           } else {
-            console.log('✅ Registros sin cambios');
+            console.log('✅ [REGISTRO TOMAS] Registros sin cambios');
             return prevRegistros;
           }
         });
       } else {
-        console.log('⚠️ No se encontraron registros o estructura incorrecta');
-        console.log('⚠️ Estructura de data:', data);
+        console.log('⚠️ [REGISTRO TOMAS] No se encontraron registros o estructura incorrecta');
+        console.log('⚠️ [REGISTRO TOMAS] Estructura de data:', data);
+        console.log('⚠️ [REGISTRO TOMAS] data.success:', data.success);
+        console.log('⚠️ [REGISTRO TOMAS] Array.isArray(data.registros):', Array.isArray(data.registros));
         setRegistros([]);
       }
     } else {
       const errorText = await response.text();
-      console.error(`❌ Error HTTP ${response.status}:`, errorText);
+      console.error(`❌ [REGISTRO TOMAS] Error HTTP ${response.status}:`, errorText);
       if (loading) {
         Alert.alert('Error', `No se pudieron cargar los registros (${response.status})`);
       }
       setRegistros([]);
     }
-  };
+  } catch (error) {
+    console.error('❌ [REGISTRO TOMAS] Error en cargarRegistrosInterno:', error);
+    if (loading) {
+      Alert.alert('Error', 'Error de conexión al cargar registros');
+    }
+    setRegistros([]);
+  } finally {
+    if (loading) {
+      setIsLoading(false);
+    }
+    setRefreshing(false);
+  }
+};
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -293,7 +451,7 @@ const RegistroTomas = () => {
       const requestData = {
         registro_id: registroId,
         estado: 'tomada',
-        observaciones: 'Actualizado desde el registro de tomas'
+        observaciones: ''
       };
       
       console.log('📤 Enviando datos:', requestData);
@@ -302,7 +460,7 @@ const RegistroTomas = () => {
       try {
         console.log('🔍 Enviando petición al endpoint de debug...');
         const debugResponse = await fetch(
-          'http://192.168.1.87/smart_pill/debug_peticiones_app.php',
+          `${API_URL}/../debug_peticiones_app.php`,
           {
             method: 'PUT',
             headers: {
@@ -320,7 +478,7 @@ const RegistroTomas = () => {
       // SEGUNDO: Enviar al endpoint real
       console.log('📡 Enviando petición al endpoint real...');
       const response = await fetch(
-        'http://192.168.1.87/smart_pill/smart_pill_api/registro_tomas.php',
+          `${API_URL}/registro_tomas.php`,
         {
           method: 'PUT',
           headers: {
@@ -336,6 +494,15 @@ const RegistroTomas = () => {
         const responseData = await response.json();
         console.log('✅ Respuesta exitosa:', responseData);
         
+        // Actualizar inmediatamente el estado local
+        setRegistros(prevRegistros => 
+          prevRegistros.map(registro => 
+            registro.registro_id === registroId 
+              ? { ...registro, estado: 'tomada' }
+              : registro
+          )
+        );
+        
         // Emitir evento de cambio de estado para actualización automática
         DeviceEventEmitter.emit('medicationStateChanged', {
           registroId: registroId,
@@ -346,7 +513,7 @@ const RegistroTomas = () => {
         
         Alert.alert('Éxito', 'Toma confirmada correctamente');
         
-        // Actualizar inmediatamente sin esperar al intervalo
+        // Actualizar desde el servidor para sincronizar
         setTimeout(() => {
           cargarRegistrosSilencioso();
         }, 1000);
@@ -360,6 +527,65 @@ const RegistroTomas = () => {
       console.error('❌ Error en confirmarToma:', error);
       console.error('❌ Error stack:', error.stack);
       Alert.alert('Error', 'Error de conexión: ' + error.message);
+    }
+  };
+
+  // Función para descargar y compartir PDF
+  const descargarReportePDF = async () => {
+    try {
+      if (!user || !user.usuario_id) {
+        Alert.alert('Error', 'No se pudo identificar el usuario');
+        return;
+      }
+
+      // Mostrar indicador de carga
+      Alert.alert('Generando PDF', 'Por favor espera mientras se genera el reporte...');
+
+      // Calcular fechas para el reporte (últimos 30 días)
+      const fechaHasta = new Date();
+      const fechaDesde = new Date();
+      fechaDesde.setDate(fechaDesde.getDate() - 30);
+
+      const fechaDesdeStr = fechaDesde.toISOString().split('T')[0];
+      const fechaHastaStr = fechaHasta.toISOString().split('T')[0];
+
+      // Construir URL del endpoint
+      const url = `${API_URL}/generar_reporte_pdf.php?usuario_id=${user.usuario_id}&fecha_desde=${fechaDesdeStr}&fecha_hasta=${fechaHastaStr}`;
+      
+      console.log('🔗 URL del reporte PDF:', url);
+
+      // Descargar el archivo PDF
+      const fileName = `reporte_medicamentos_${fechaDesdeStr}_${fechaHastaStr}.pdf`;
+      const fileUri = FileSystem.documentDirectory + fileName;
+
+      const downloadResult = await FileSystem.downloadAsync(url, fileUri);
+      
+      if (downloadResult.status === 200) {
+        console.log('✅ PDF descargado exitosamente:', downloadResult.uri);
+        
+        // Verificar si se puede compartir
+        const isAvailable = await Sharing.isAvailableAsync();
+        if (isAvailable) {
+          // Compartir el archivo como un comprobante
+          await Sharing.shareAsync(downloadResult.uri, {
+            mimeType: 'application/pdf',
+            dialogTitle: 'Compartir Reporte de Medicamentos',
+            UTI: 'com.adobe.pdf'
+          });
+        } else {
+          Alert.alert(
+            'Descarga Completa', 
+            `El reporte se ha guardado en: ${downloadResult.uri}`,
+            [{ text: 'OK' }]
+          );
+        }
+      } else {
+        throw new Error(`Error en la descarga: ${downloadResult.status}`);
+      }
+
+    } catch (error) {
+      console.error('❌ Error al descargar reporte PDF:', error);
+      Alert.alert('Error', 'No se pudo generar el reporte PDF. Verifica tu conexión e inténtalo de nuevo.');
     }
   };
 
@@ -401,7 +627,17 @@ const RegistroTomas = () => {
     };
 
     const formatearFecha = (fecha) => {
-      return new Date(fecha).toLocaleDateString('es-ES', {
+      // Crear la fecha de forma que respete la zona horaria local
+      // Si la fecha viene en formato YYYY-MM-DD, la parseamos correctamente
+      let fechaObj;
+      if (typeof fecha === 'string' && fecha.includes('-')) {
+        const [year, month, day] = fecha.split('-');
+        fechaObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+      } else {
+        fechaObj = new Date(fecha);
+      }
+      
+      return fechaObj.toLocaleDateString('es-ES', {
         weekday: 'short',
         day: 'numeric',
         month: 'short'
@@ -449,15 +685,37 @@ const RegistroTomas = () => {
           </View>
         </View>
         
-        {(item.estado === 'pospuesta' || item.estado === 'rechazada' || item.estado === 'omitida') && (
-          <TouchableOpacity
-            style={styles.confirmarButton}
-            onPress={() => confirmarToma(item.registro_id)}
-          >
-            <MaterialIcons name="check" size={20} color="white" />
-            <Text style={styles.confirmarButtonText}>Marcar como Tomada</Text>
-          </TouchableOpacity>
+        {/* Mostrar observación existente si la hay */}
+        {item.observaciones && (
+          <View style={styles.observacionContainer}>
+            <MaterialIcons name="note" size={16} color="#666" />
+            <Text style={styles.observacionTexto}>{item.observaciones}</Text>
+          </View>
         )}
+        
+        {/* Botones de acción */}
+        <View style={styles.botonesContainer}>
+          {(item.estado === 'pospuesta' || item.estado === 'rechazada' || item.estado === 'omitida') && (
+            <TouchableOpacity
+              style={styles.confirmarButton}
+              onPress={() => confirmarToma(item.registro_id)}
+            >
+              <MaterialIcons name="check" size={20} color="white" />
+              <Text style={styles.confirmarButtonText}>Marcar como Tomada</Text>
+            </TouchableOpacity>
+          )}
+          
+          {/* Botón de observaciones */}
+          <TouchableOpacity
+            style={styles.observacionButton}
+            onPress={() => abrirModalObservaciones(item)}
+          >
+            <MaterialIcons name="note-add" size={20} color="#7A2C34" />
+            <Text style={styles.observacionButtonText}>
+              {item.observaciones ? 'Editar Observación' : 'Agregar Observación'}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   };
@@ -613,11 +871,11 @@ const RegistroTomas = () => {
 
         {/* Iconos adicionales */}
         <View style={styles.filtrosIconsRow}>
-          <TouchableOpacity style={styles.iconButton}>
+          <TouchableOpacity 
+            style={styles.iconButton}
+            onPress={descargarReportePDF}
+          >
             <MaterialIcons name="file-download" size={20} color="#7A2C34" />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.iconButton}>
-            <MaterialIcons name="insert-chart" size={20} color="#7A2C34" />
           </TouchableOpacity>
         </View>
       </View>
@@ -640,10 +898,6 @@ const RegistroTomas = () => {
             <Text style={styles.emptyText}>
               Aquí aparecerán tus tomas de medicamentos una vez que comiences a registrarlas
             </Text>
-            <TouchableOpacity style={styles.refreshButton} onPress={cargarRegistros}>
-              <MaterialIcons name="refresh" size={20} color="white" />
-              <Text style={styles.refreshButtonText}>Actualizar</Text>
-            </TouchableOpacity>
           </View>
         ) : (
           <View style={styles.listContainer}>
@@ -684,6 +938,72 @@ const RegistroTomas = () => {
           }}
         />
       )}
+
+      {/* Modal de Observaciones */}
+      <Modal
+        visible={modalObservacionesVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={cerrarModalObservaciones}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>
+                {registroSeleccionado?.observaciones ? 'Editar Observación' : 'Agregar Observación'}
+              </Text>
+              <TouchableOpacity onPress={cerrarModalObservaciones}>
+                <MaterialIcons name="close" size={24} color="#666" />
+              </TouchableOpacity>
+            </View>
+            
+            <View style={styles.modalContent}>
+              <Text style={styles.modalSubtitle}>
+                {registroSeleccionado?.nombre_tratamiento || registroSeleccionado?.nombre_comercial}
+              </Text>
+              <Text style={styles.modalFecha}>
+                {registroSeleccionado?.fecha_programada} - {registroSeleccionado?.hora_programada?.substring(0, 5)}
+              </Text>
+              
+              <TextInput
+                style={[styles.observacionInput, { height: Math.max(100, alturaObservacion) }]}
+                placeholder="Escribe tu observación aquí..."
+                value={observacionTexto}
+                onChangeText={setObservacionTexto}
+                onContentSizeChange={(event) => {
+                  const nuevaAltura = event.nativeEvent.contentSize.height;
+                  console.log('📏 Altura del contenido:', nuevaAltura);
+                  setAlturaObservacion(Math.max(100, nuevaAltura + 40)); // +40 para padding extra
+                }}
+                multiline={true}
+                scrollEnabled={false}
+                textAlignVertical="top"
+              />
+            </View>
+            
+            <View style={styles.modalButtons}>
+              <TouchableOpacity 
+                style={styles.cancelButton}
+                onPress={cerrarModalObservaciones}
+              >
+                <Text style={styles.cancelButtonText}>Cancelar</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={[styles.saveButton, guardandoObservacion && styles.saveButtonDisabled]}
+                onPress={guardarObservacion}
+                disabled={guardandoObservacion}
+              >
+                {guardandoObservacion ? (
+                  <ActivityIndicator size="small" color="white" />
+                ) : (
+                  <Text style={styles.saveButtonText}>Guardar</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -978,6 +1298,134 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: '#e0e0e0',
+  },
+  // Estilos para observaciones
+  observacionContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#f8f9fa',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 12,
+    gap: 8,
+  },
+  observacionTexto: {
+    flex: 1,
+    fontSize: 14,
+    color: '#333',
+    lineHeight: 20,
+  },
+  botonesContainer: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  observacionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#7A2C34',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    flex: 1,
+    minWidth: 120,
+  },
+  observacionButtonText: {
+    color: '#7A2C34',
+    fontWeight: '500',
+    fontSize: 12,
+    marginLeft: 4,
+  },
+  // Estilos para el modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalContainer: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    width: '100%',
+    maxWidth: 400,
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  modalContent: {
+    padding: 20,
+  },
+  modalSubtitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#7A2C34',
+    marginBottom: 4,
+  },
+  modalFecha: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 16,
+  },
+  observacionInput: {
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    minHeight: 100,
+    backgroundColor: '#f8f9fa',
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    padding: 20,
+    gap: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+  },
+  cancelButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    alignItems: 'center',
+  },
+  cancelButtonText: {
+    color: '#666',
+    fontWeight: '500',
+    fontSize: 16,
+  },
+  saveButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    backgroundColor: '#7A2C34',
+    alignItems: 'center',
+  },
+  saveButtonDisabled: {
+    backgroundColor: '#ccc',
+  },
+  saveButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 16,
   },
 });
 

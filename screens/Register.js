@@ -6,8 +6,8 @@ import {
   TouchableOpacity,
   StyleSheet,
   Alert,
-  Image,
   Platform,
+  Image,
 } from "react-native";
 import { apiRequest, API_CONFIG } from "../credenciales";
 import { useUser } from "../UserContextProvider";
@@ -91,12 +91,12 @@ export default function Register({ navigation }) {
 
   return (
     <View style={styles.padre}>
-      <View style={{ flex: 1, justifyContent: "flex-end" }}>
-        <Image
-          source={require("../assets/icons/smartpill.png")}
-          style={[styles.profile, { width: 260, height: 260 }]}
-        />
-      </View>
+      <Image
+        source={require("../assets/icons/smartpill.svg")}
+        style={styles.profile}
+        onError={(error) => console.log('Error loading smartpill.svg:', error)}
+        onLoad={() => console.log('smartpill.svg loaded successfully')}
+      />
       <View style={[styles.tarjeta, { marginTop: -80, marginBottom: 60 }]}>
         <View style={styles.cajaTexto}>
           <TextInput
@@ -217,10 +217,11 @@ const styles = StyleSheet.create({
     backgroundColor: "white",
   },
   profile: {
-    width: 200,
-    height: 200,
-    borderRadius: 50,
-    borderColor: "White",
+    width: 260,
+    height: 260,
+    borderRadius: 0,
+    borderColor: "transparent",
+    resizeMode: 'contain',
   },
   tarjeta: {
     margin: 0,

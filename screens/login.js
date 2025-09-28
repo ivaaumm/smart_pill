@@ -96,17 +96,12 @@ export default function Login(props) {
   };
 
   return (
-    <View
-      style={{
-        flex: 1,
-        justifyContent: "center",
-        alignItems: "center",
-        backgroundColor: "white",
-      }}
-    >
+    <View style={styles.padre}>
       <Image
-        source={require("../assets/icons/smartpill.png")}
-        style={{ width: 260, height: 260, marginBottom: 0 }}
+        source={require("../assets/icons/smartpill.svg")}
+        style={styles.profile}
+        onError={(error) => console.log('Error loading smartpill.svg:', error)}
+        onLoad={() => console.log('smartpill.svg loaded successfully')}
       />
       <View style={[styles.tarjeta, { marginTop: -80, marginBottom: 60 }]}>
         <View style={styles.cajaTexto}>
@@ -160,10 +155,11 @@ const styles = StyleSheet.create({
     backgroundColor: "white",
   },
   profile: {
-    width: 200,
-    height: 200,
-    borderRadius: 50,
-    borderColor: "White",
+    width: 260,
+    height: 260,
+    borderRadius: 0,
+    borderColor: "transparent",
+    resizeMode: 'contain',
   },
   tarjeta: {
     margin: 0,
